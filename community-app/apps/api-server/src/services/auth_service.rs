@@ -29,6 +29,7 @@ pub struct JwtConfig {
     decoding_key: DecodingKey,
     access_ttl: Duration,
     refresh_ttl: Duration,
+    refresh_pepper: String,
 }
 
 #[derive(Debug, Serialize, Deserialize)]
@@ -113,7 +114,7 @@ impl AuthService {
         }
 
         let now = OffsetDateTime::now_utc();
-        let refresh_hash = hash_refresh_token(&req.refresh_token);
+        let refresh_hash = hash_refresh_token(&self.jwt.refresh_pepper, &req.refresh_token);
         let session = self
             .sessions
             .find_by_refresh_hash(&refresh_hash)
@@ -132,7 +133,8 @@ impl AuthService {
             .map_err(|_| ApiError::internal())?
             .ok_or_else(ApiError::unauthorized)?;
 
-        let (new_refresh_token, new_refresh_hash) = generate_refresh_token_and_hash();
+        let (new_refresh_token, new_refresh_hash) =
+            generate_refresh_token_and_hash(&self.jwt.refresh_pepper);
         let new_expires = now + self.jwt.refresh_ttl;
         self.sessions
             .rotate_refresh_token(session.id, &new_refresh_hash, now, new_expires)
@@ -199,7 +201,7 @@ impl AuthService {
     async fn issue_session_and_tokens(&self, user_id: Uuid) -> Result<(String, String), ApiError> {
         let now = OffsetDateTime::now_utc();
         let session_id = Uuid::now_v7();
-        let (refresh_token, refresh_hash) = generate_refresh_token_and_hash();
+        let (refresh_token, refresh_hash) = generate_refresh_token_and_hash(&self.jwt.refresh_pepper);
         let refresh_expires = now + self.jwt.refresh_ttl;
 
         self.sessions
@@ -234,8 +236,9 @@ impl AuthService {
 }
 
 pub fn jwt_config_from_env() -> Result<JwtConfig, ApiError> {
-    let secret = std::env::var("JWT_SECRET").map_err(|_| ApiError::internal())?;
-    if secret.trim().len() < 16 {
+    let access_secret = std::env::var("JWT_ACCESS_SECRET").map_err(|_| ApiError::internal())?;
+    let refresh_secret = std::env::var("JWT_REFRESH_SECRET").map_err(|_| ApiError::internal())?;
+    if access_secret.trim().len() < 16 || refresh_secret.trim().len() < 16 {
         return Err(ApiError::internal());
     }
 
@@ -243,16 +246,17 @@ pub fn jwt_config_from_env() -> Result<JwtConfig, ApiError> {
         .ok()
         .and_then(|v| v.parse::<i64>().ok())
         .unwrap_or(900);
-    let refresh_ttl_days: i64 = std::env::var("REFRESH_TOKEN_TTL_DAYS")
+    let refresh_ttl_seconds: i64 = std::env::var("REFRESH_TOKEN_TTL_SECONDS")
         .ok()
         .and_then(|v| v.parse::<i64>().ok())
-        .unwrap_or(14);
+        .unwrap_or(2_592_000);
 
     Ok(JwtConfig {
-        encoding_key: EncodingKey::from_secret(secret.as_bytes()),
-        decoding_key: DecodingKey::from_secret(secret.as_bytes()),
+        encoding_key: EncodingKey::from_secret(access_secret.as_bytes()),
+        decoding_key: DecodingKey::from_secret(access_secret.as_bytes()),
         access_ttl: Duration::seconds(access_ttl_seconds.max(60)),
-        refresh_ttl: Duration::days(refresh_ttl_days.clamp(1, 365)),
+        refresh_ttl: Duration::seconds(refresh_ttl_seconds.clamp(60, 31_536_000)),
+        refresh_pepper: refresh_secret,
     })
 }
 
@@ -275,16 +279,20 @@ fn verify_password(hash: &str, password: &str) -> Result<(), argon2::password_ha
     Argon2::default().verify_password(password.as_bytes(), &parsed)
 }
 
-fn generate_refresh_token_and_hash() -> (String, String) {
+fn generate_refresh_token_and_hash(refresh_pepper: &str) -> (String, String) {
     let mut buf = [0u8; 32];
     OsRng.fill_bytes(&mut buf);
     let token = URL_SAFE_NO_PAD.encode(buf);
-    let hash = hash_refresh_token(&token);
+    let hash = hash_refresh_token(refresh_pepper, &token);
     (token, hash)
 }
 
-fn hash_refresh_token(token: &str) -> String {
-    let digest = Sha256::digest(token.as_bytes());
+fn hash_refresh_token(refresh_pepper: &str, token: &str) -> String {
+    let mut hasher = Sha256::new();
+    hasher.update(refresh_pepper.as_bytes());
+    hasher.update(b":");
+    hasher.update(token.as_bytes());
+    let digest = hasher.finalize();
     URL_SAFE_NO_PAD.encode(digest)
 }
 
@@ -296,4 +304,3 @@ fn map_unique_violation(err: sqlx::Error) -> ApiError {
     }
     ApiError::internal()
 }
-

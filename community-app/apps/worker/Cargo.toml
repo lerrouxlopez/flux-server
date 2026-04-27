@@ -13,4 +13,3 @@ time.workspace = true
 tokio.workspace = true
 tracing.workspace = true
 telemetry = { path = "../../crates/telemetry" }
-

@@ -4,7 +4,6 @@ use axum::{
     Json, Router,
 };
 use serde::Serialize;
-use std::net::SocketAddr;
 use tower_http::trace::TraceLayer;
 use tracing::{error, info};
 
@@ -18,17 +17,17 @@ async fn main() -> anyhow::Result<()> {
     dotenvy::dotenv().ok();
     telemetry::init();
 
-    let port: u16 = config::parse("REALTIME_PORT")?.unwrap_or(3001);
+    let ws_addr = config::parse_socket_addr("WS_ADDR")?
+        .unwrap_or_else(|| "0.0.0.0:8081".parse().expect("valid default addr"));
 
     let app = Router::new()
         .route("/health", get(health))
         .route("/ws", get(ws))
         .layer(TraceLayer::new_for_http());
 
-    let addr = SocketAddr::from(([0, 0, 0, 0], port));
-    info!(%addr, "realtime-gateway listening");
+    info!(%ws_addr, "realtime-gateway listening");
 
-    let listener = tokio::net::TcpListener::bind(addr).await?;
+    let listener = tokio::net::TcpListener::bind(ws_addr).await?;
     if let Err(err) = axum::serve(listener, app).await {
         error!(error = %err, "server exited with error");
     }
@@ -56,4 +55,3 @@ async fn handle_socket(mut socket: WebSocket) {
         }
     }
 }
-

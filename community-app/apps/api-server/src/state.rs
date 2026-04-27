@@ -22,7 +22,8 @@ impl AppState {
 
         let users = UserRepository::new(pool.clone());
         let sessions = SessionRepository::new(pool.clone());
-        let jwt = auth_service::jwt_config_from_env().expect("JWT_SECRET must be set and valid");
+        let jwt = auth_service::jwt_config_from_env()
+            .expect("JWT_ACCESS_SECRET and JWT_REFRESH_SECRET must be set and valid");
         let auth_service = AuthService::new(users, sessions, jwt);
 
         let orgs = OrgRepository::new(pool.clone());

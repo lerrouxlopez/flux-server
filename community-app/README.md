@@ -8,7 +8,7 @@ Rust + PostgreSQL backend scaffold for an org-centric realtime app.
   - `docker compose up -d`
 - Run binaries:
   - `cp .env.example .env`
-  - set `JWT_SECRET` in `.env`
+  - set `JWT_ACCESS_SECRET` + `JWT_REFRESH_SECRET` in `.env`
   - API: `cargo run -p api-server`
   - Gateway: `cargo run -p realtime-gateway`
   - Worker: `cargo run -p worker`

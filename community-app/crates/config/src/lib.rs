@@ -18,3 +18,6 @@ where
         .map_err(|_| anyhow::anyhow!("{key} is invalid"))
 }
 
+pub fn parse_socket_addr(key: &str) -> anyhow::Result<Option<std::net::SocketAddr>> {
+    parse::<std::net::SocketAddr>(key)
+}
