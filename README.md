@@ -7,9 +7,16 @@ Rust + PostgreSQL backend scaffold for an org-centric realtime app.
   - `docker compose up -d`
 - Run migrations + API:
   - `cp .env.example .env`
+  - set `JWT_SECRET` in `.env`
   - `cargo run -p api-server`
 - Check health:
   - `curl http://localhost:3000/health`
+
+## Auth endpoints
+- `POST /auth/register`
+- `POST /auth/login`
+- `POST /auth/refresh`
+- `POST /auth/logout` (requires `Authorization: Bearer <access_token>`)
 
 ## Layout
 - `apps/api-server` Axum HTTP API (MVC + Service + Repository)

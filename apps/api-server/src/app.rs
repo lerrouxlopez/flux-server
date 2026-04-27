@@ -4,8 +4,8 @@ use tower_http::trace::TraceLayer;
 
 pub fn router(state: AppState) -> Router {
     Router::new()
-        .nest("/", controllers::health::router())
+        .merge(controllers::health::router())
+        .merge(controllers::auth::router())
         .with_state(state)
         .layer(TraceLayer::new_for_http())
 }
-
