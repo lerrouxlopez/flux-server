@@ -5,25 +5,17 @@ mod repositories;
 mod services;
 mod state;
 
-use std::{env, net::SocketAddr};
+use std::net::SocketAddr;
 use tracing::{error, info};
-use tracing_subscriber::{layer::SubscriberExt, util::SubscriberInitExt, EnvFilter};
 
 #[tokio::main]
 async fn main() -> anyhow::Result<()> {
     dotenvy::dotenv().ok();
 
-    tracing_subscriber::registry()
-        .with(EnvFilter::try_from_default_env().unwrap_or_else(|_| EnvFilter::new("info")))
-        .with(tracing_subscriber::fmt::layer())
-        .init();
+    telemetry::init();
 
-    let database_url =
-        env::var("DATABASE_URL").expect("DATABASE_URL must be set (see .env.example)");
-    let port: u16 = env::var("PORT")
-        .unwrap_or_else(|_| "3000".to_string())
-        .parse()
-        .expect("PORT must be a valid u16");
+    let database_url = config::required("DATABASE_URL")?;
+    let port: u16 = config::parse("PORT")?.unwrap_or(3000);
 
     let pool = db::connect(&database_url).await?;
     db::migrate(&pool).await?;
@@ -41,4 +33,3 @@ async fn main() -> anyhow::Result<()> {
 
     Ok(())
 }
-

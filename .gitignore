@@ -1,3 +1,5 @@
 /target
 /.env
 .DS_Store
+/community-app/target
+/community-app/.env

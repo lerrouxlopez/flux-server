@@ -2,7 +2,22 @@
 resolver = "2"
 members = [
   "apps/api-server",
+  "apps/realtime-gateway",
+  "apps/worker",
+
+  "crates/auth",
+  "crates/branding",
+  "crates/chat",
+  "crates/config",
   "crates/db",
+  "crates/domain",
+  "crates/events",
+  "crates/media",
+  "crates/notifications",
+  "crates/orgs",
+  "crates/permissions",
+  "crates/realtime",
+  "crates/telemetry",
 ]
 
 [workspace.package]
@@ -12,7 +27,7 @@ license = "UNLICENSED"
 [workspace.dependencies]
 anyhow = "1"
 argon2 = "0.5"
-axum = { version = "0.8", features = ["macros"] }
+axum = { version = "0.8", features = ["macros", "ws"] }
 base64 = "0.22"
 dotenvy = "0.15"
 jsonwebtoken = "9"
