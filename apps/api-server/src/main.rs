@@ -1,20 +1,13 @@
-use axum::{extract::State, http::StatusCode, routing::get, Json, Router};
-use serde::Serialize;
-use sqlx::PgPool;
+mod app;
+mod controllers;
+mod models;
+mod repositories;
+mod services;
+mod state;
+
 use std::{env, net::SocketAddr};
-use tower_http::trace::TraceLayer;
 use tracing::{error, info};
 use tracing_subscriber::{layer::SubscriberExt, util::SubscriberInitExt, EnvFilter};
-
-#[derive(Clone)]
-struct AppState {
-    pool: PgPool,
-}
-
-#[derive(Serialize)]
-struct HealthResponse {
-    status: &'static str,
-}
 
 #[tokio::main]
 async fn main() -> anyhow::Result<()> {
@@ -35,10 +28,8 @@ async fn main() -> anyhow::Result<()> {
     let pool = db::connect(&database_url).await?;
     db::migrate(&pool).await?;
 
-    let app = Router::new()
-        .route("/health", get(health))
-        .with_state(AppState { pool })
-        .layer(TraceLayer::new_for_http());
+    let state = state::AppState::new(pool);
+    let app = app::router(state);
 
     let addr = SocketAddr::from(([0, 0, 0, 0], port));
     info!(%addr, "api-server listening");
@@ -51,7 +42,3 @@ async fn main() -> anyhow::Result<()> {
     Ok(())
 }
 
-async fn health(State(state): State<AppState>) -> Result<Json<HealthResponse>, StatusCode> {
-    db::ping(&state.pool).await.map_err(|_| StatusCode::SERVICE_UNAVAILABLE)?;
-    Ok(Json(HealthResponse { status: "ok" }))
-}

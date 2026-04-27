@@ -12,6 +12,10 @@ Rust + PostgreSQL backend scaffold for an org-centric realtime app.
   - `curl http://localhost:3000/health`
 
 ## Layout
-- `apps/api-server` Axum HTTP API (currently: `/health`)
+- `apps/api-server` Axum HTTP API (MVC + Service + Repository)
+  - `controllers/` HTTP handlers + routing
+  - `services/` business logic
+  - `repositories/` DB access layer
+  - `models/` request/response models
 - `crates/db` Postgres pool + SQLx migrations
 - `migrations/` SQL schema migrations (SQLx)
