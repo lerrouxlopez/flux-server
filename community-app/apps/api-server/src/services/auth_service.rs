@@ -15,6 +15,7 @@ use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
 use time::{Duration, OffsetDateTime};
 use uuid::Uuid;
+use validator::ValidateEmail;
 
 #[derive(Clone)]
 pub struct AuthService {
@@ -38,6 +39,7 @@ struct AccessClaims {
     sid: String,
     iat: i64,
     exp: i64,
+    typ: String,
 }
 
 impl AuthService {
@@ -47,6 +49,9 @@ impl AuthService {
 
     pub async fn register(&self, req: RegisterRequest) -> Result<AuthResponse, ApiError> {
         let email = normalize_email(&req.email).ok_or_else(ApiError::bad_request)?;
+        if !email.validate_email() {
+            return Err(ApiError::bad_request());
+        }
         if req.display_name.trim().is_empty() {
             return Err(ApiError::bad_request());
         }
@@ -82,6 +87,9 @@ impl AuthService {
 
     pub async fn login(&self, req: LoginRequest) -> Result<AuthResponse, ApiError> {
         let email = normalize_email(&req.email).ok_or_else(ApiError::bad_request)?;
+        if !email.validate_email() {
+            return Err(ApiError::bad_request());
+        }
         let user = self
             .users
             .find_by_email(&email)
@@ -133,13 +141,14 @@ impl AuthService {
             .map_err(|_| ApiError::internal())?
             .ok_or_else(ApiError::unauthorized)?;
 
-        let (new_refresh_token, new_refresh_hash) =
-            generate_refresh_token_and_hash(&self.jwt.refresh_pepper);
+        let (new_refresh_token, new_refresh_hash) = generate_refresh_token_and_hash(&self.jwt.refresh_pepper);
         let new_expires = now + self.jwt.refresh_ttl;
         self.sessions
-            .rotate_refresh_token(session.id, &new_refresh_hash, now, new_expires)
+            .rotate_refresh_token_if_matches(session.id, &refresh_hash, &new_refresh_hash, now, new_expires)
             .await
-            .map_err(|_| ApiError::internal())?;
+            .map_err(|_| ApiError::internal())?
+            .then_some(())
+            .ok_or_else(ApiError::unauthorized)?;
 
         let access_token = self
             .sign_access_token(session.user_id, session.id, now)
@@ -174,6 +183,10 @@ impl AuthService {
         )
         .map_err(|_| ApiError::unauthorized())?;
 
+        if token_data.claims.typ != "access" {
+            return Err(ApiError::unauthorized());
+        }
+
         let user_id = Uuid::parse_str(&token_data.claims.sub).map_err(|_| ApiError::unauthorized())?;
         let session_id =
             Uuid::parse_str(&token_data.claims.sid).map_err(|_| ApiError::unauthorized())?;
@@ -196,6 +209,22 @@ impl AuthService {
             .map_err(|_| ApiError::internal())?;
 
         Ok(AuthContext { user_id, session_id })
+    }
+
+    pub async fn me(&self, user_id: Uuid) -> Result<UserView, ApiError> {
+        let user = self
+            .users
+            .find_by_id(user_id)
+            .await
+            .map_err(|_| ApiError::internal())?
+            .ok_or_else(ApiError::unauthorized)?;
+
+        Ok(UserView {
+            id: user.id,
+            email: user.email,
+            display_name: user.display_name,
+            created_at: user.created_at,
+        })
     }
 
     async fn issue_session_and_tokens(&self, user_id: Uuid) -> Result<(String, String), ApiError> {
@@ -229,6 +258,7 @@ impl AuthService {
             sid: session_id.to_string(),
             iat,
             exp,
+            typ: "access".to_string(),
         };
 
         jsonwebtoken::encode(&Header::default(), &claims, &self.jwt.encoding_key)
@@ -270,7 +300,11 @@ fn normalize_email(email: &str) -> Option<String> {
 
 fn hash_password(password: &str) -> Result<String, argon2::password_hash::Error> {
     let salt = SaltString::generate(&mut OsRng);
-    let argon2 = Argon2::default();
+    let argon2 = Argon2::new(
+        argon2::Algorithm::Argon2id,
+        argon2::Version::V0x13,
+        argon2::Params::default(),
+    );
     Ok(argon2.hash_password(password.as_bytes(), &salt)?.to_string())
 }
 

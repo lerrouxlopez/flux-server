@@ -1,5 +1,5 @@
 use crate::{models::auth, state::AppState};
-use axum::{routing::post, Json, Router};
+use axum::{routing::{get, post}, Json, Router};
 
 pub fn router() -> Router<AppState> {
     Router::new()
@@ -7,6 +7,7 @@ pub fn router() -> Router<AppState> {
         .route("/auth/login", post(login))
         .route("/auth/refresh", post(refresh))
         .route("/auth/logout", post(logout))
+        .route("/auth/me", get(me))
 }
 
 async fn register(
@@ -39,4 +40,12 @@ async fn logout(
 ) -> Result<Json<auth::LogoutResponse>, auth::ApiError> {
     state.auth_service.logout(ctx.session_id).await?;
     Ok(Json(auth::LogoutResponse { ok: true }))
+}
+
+async fn me(
+    axum::extract::State(state): axum::extract::State<AppState>,
+    auth::CurrentAuth(ctx): auth::CurrentAuth,
+) -> Result<Json<auth::UserView>, auth::ApiError> {
+    let user = state.auth_service.me(ctx.user_id).await?;
+    Ok(Json(user))
 }

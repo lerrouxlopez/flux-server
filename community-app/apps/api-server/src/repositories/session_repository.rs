@@ -170,4 +170,34 @@ impl SessionRepository {
         .await?;
         Ok(())
     }
+
+    pub async fn rotate_refresh_token_if_matches(
+        &self,
+        session_id: Uuid,
+        old_refresh_token_hash: &str,
+        new_refresh_token_hash: &str,
+        at: OffsetDateTime,
+        new_expires_at: OffsetDateTime,
+    ) -> Result<bool, sqlx::Error> {
+        let res = sqlx::query(
+            r#"
+            update refresh_tokens
+            set token_hash = $3,
+                last_used_at = $4,
+                expires_at = $5
+            where id = $1
+              and token_hash = $2
+              and revoked_at is null
+            "#,
+        )
+        .bind(session_id)
+        .bind(old_refresh_token_hash)
+        .bind(new_refresh_token_hash)
+        .bind(at)
+        .bind(new_expires_at)
+        .execute(&self.pool)
+        .await?;
+
+        Ok(res.rows_affected() == 1)
+    }
 }
