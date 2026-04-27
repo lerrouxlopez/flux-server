@@ -1,5 +1,6 @@
 mod app;
 mod controllers;
+mod middleware;
 mod models;
 mod repositories;
 mod services;

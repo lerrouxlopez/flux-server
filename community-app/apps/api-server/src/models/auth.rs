@@ -107,19 +107,13 @@ impl FromRequestParts<crate::state::AppState> for CurrentAuth {
 
     async fn from_request_parts(
         parts: &mut Parts,
-        state: &crate::state::AppState,
+        _state: &crate::state::AppState,
     ) -> Result<Self, Self::Rejection> {
-        let auth_header = parts
-            .headers
-            .get(axum::http::header::AUTHORIZATION)
-            .and_then(|v| v.to_str().ok())
+        let ctx = parts
+            .extensions
+            .get::<AuthContext>()
+            .cloned()
             .ok_or_else(ApiError::unauthorized)?;
-
-        let token = auth_header
-            .strip_prefix("Bearer ")
-            .ok_or_else(ApiError::unauthorized)?;
-
-        let ctx = state.auth_service.authenticate(token).await?;
         Ok(CurrentAuth(ctx))
     }
 }

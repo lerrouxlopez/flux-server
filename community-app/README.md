@@ -19,6 +19,10 @@ Rust + PostgreSQL backend scaffold for an org-centric realtime app.
 - `POST /auth/refresh`
 - `POST /auth/logout` (requires `Authorization: Bearer <access_token>`)
 
+## Health endpoints
+- `GET /healthz` (process liveness)
+- `GET /readyz` (checks PostgreSQL, Redis, NATS)
+
 ## Org + channel endpoints
 - `POST /orgs` (requires `Authorization: Bearer <access_token>`)
 - `GET /orgs/current` (requires `Authorization: Bearer <access_token>`)
