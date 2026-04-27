@@ -18,6 +18,13 @@ Rust + PostgreSQL backend scaffold for an org-centric realtime app.
 - `POST /auth/refresh`
 - `POST /auth/logout` (requires `Authorization: Bearer <access_token>`)
 
+## Org + channel endpoints
+- `POST /orgs` (requires `Authorization: Bearer <access_token>`)
+- `GET /orgs/current` (requires `Authorization: Bearer <access_token>`)
+- `GET /channels` (requires `Authorization: Bearer <access_token>`)
+- `POST /channels` (requires `Authorization: Bearer <access_token>`)
+- Optional header for the above org-scoped routes: `x-organization-id: <uuid>`
+
 ## Layout
 - `apps/api-server` Axum HTTP API (MVC + Service + Repository)
   - `controllers/` HTTP handlers + routing

@@ -1,6 +1,9 @@
 use crate::{
-    repositories::{HealthRepository, SessionRepository, UserRepository},
-    services::{auth_service, AuthService, HealthService},
+    repositories::{
+        ChannelRepository, HealthRepository, MembershipRepository, OrgRepository, SessionRepository,
+        UserRepository,
+    },
+    services::{auth_service, AuthService, ChannelsService, HealthService, OrgsService},
 };
 use sqlx::PgPool;
 
@@ -8,6 +11,8 @@ use sqlx::PgPool;
 pub struct AppState {
     pub health_service: HealthService,
     pub auth_service: AuthService,
+    pub orgs_service: OrgsService,
+    pub channels_service: ChannelsService,
 }
 
 impl AppState {
@@ -16,13 +21,22 @@ impl AppState {
         let health_service = HealthService::new(health_repo);
 
         let users = UserRepository::new(pool.clone());
-        let sessions = SessionRepository::new(pool);
+        let sessions = SessionRepository::new(pool.clone());
         let jwt = auth_service::jwt_config_from_env().expect("JWT_SECRET must be set and valid");
         let auth_service = AuthService::new(users, sessions, jwt);
+
+        let orgs = OrgRepository::new(pool.clone());
+        let memberships = MembershipRepository::new(pool.clone());
+        let orgs_service = OrgsService::new(orgs, memberships.clone());
+
+        let channels = ChannelRepository::new(pool);
+        let channels_service = ChannelsService::new(channels, memberships);
 
         Self {
             health_service,
             auth_service,
+            orgs_service,
+            channels_service,
         }
     }
 }
