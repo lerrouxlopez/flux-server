@@ -34,9 +34,9 @@ impl SessionRepository {
     ) -> Result<SessionRow, sqlx::Error> {
         let row = sqlx::query(
             r#"
-            insert into user_sessions (id, user_id, refresh_token_hash, expires_at, user_agent, ip)
+            insert into refresh_tokens (id, user_id, token_hash, expires_at, user_agent, ip)
             values ($1, $2, $3, $4, $5, $6::inet)
-            returning id, user_id, refresh_token_hash, created_at, expires_at, last_used_at, revoked_at
+            returning id, user_id, token_hash, created_at, expires_at, last_used_at, revoked_at
             "#,
         )
         .bind(id)
@@ -51,7 +51,7 @@ impl SessionRepository {
         Ok(SessionRow {
             id: row.try_get("id")?,
             user_id: row.try_get("user_id")?,
-            refresh_token_hash: row.try_get("refresh_token_hash")?,
+            refresh_token_hash: row.try_get("token_hash")?,
             created_at: row.try_get("created_at")?,
             expires_at: row.try_get("expires_at")?,
             last_used_at: row.try_get("last_used_at")?,
@@ -65,9 +65,9 @@ impl SessionRepository {
     ) -> Result<Option<SessionRow>, sqlx::Error> {
         let maybe_row = sqlx::query(
             r#"
-            select id, user_id, refresh_token_hash, created_at, expires_at, last_used_at, revoked_at
-            from user_sessions
-            where refresh_token_hash = $1
+            select id, user_id, token_hash as refresh_token_hash, created_at, expires_at, last_used_at, revoked_at
+            from refresh_tokens
+            where token_hash = $1
             "#,
         )
         .bind(refresh_token_hash)
@@ -92,8 +92,8 @@ impl SessionRepository {
     pub async fn find_active_by_id(&self, session_id: Uuid) -> Result<Option<SessionRow>, sqlx::Error> {
         let maybe_row = sqlx::query(
             r#"
-            select id, user_id, refresh_token_hash, created_at, expires_at, last_used_at, revoked_at
-            from user_sessions
+            select id, user_id, token_hash as refresh_token_hash, created_at, expires_at, last_used_at, revoked_at
+            from refresh_tokens
             where id = $1
             "#,
         )
@@ -119,7 +119,7 @@ impl SessionRepository {
     pub async fn mark_used(&self, session_id: Uuid, at: OffsetDateTime) -> Result<(), sqlx::Error> {
         sqlx::query(
             r#"
-            update user_sessions
+            update refresh_tokens
             set last_used_at = $2
             where id = $1
             "#,
@@ -134,7 +134,7 @@ impl SessionRepository {
     pub async fn revoke(&self, session_id: Uuid, at: OffsetDateTime) -> Result<(), sqlx::Error> {
         sqlx::query(
             r#"
-            update user_sessions
+            update refresh_tokens
             set revoked_at = $2
             where id = $1 and revoked_at is null
             "#,
@@ -155,8 +155,8 @@ impl SessionRepository {
     ) -> Result<(), sqlx::Error> {
         sqlx::query(
             r#"
-            update user_sessions
-            set refresh_token_hash = $2,
+            update refresh_tokens
+            set token_hash = $2,
                 last_used_at = $3,
                 expires_at = $4
             where id = $1 and revoked_at is null
@@ -171,4 +171,3 @@ impl SessionRepository {
         Ok(())
     }
 }
-
