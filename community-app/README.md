@@ -24,12 +24,27 @@ Rust + PostgreSQL backend scaffold for an org-centric realtime app.
 - `GET /healthz` (process liveness)
 - `GET /readyz` (checks PostgreSQL, Redis, NATS)
 
-## Org + channel endpoints
-- `POST /orgs` (requires `Authorization: Bearer <access_token>`)
-- `GET /orgs/current` (requires `Authorization: Bearer <access_token>`)
-- `GET /channels` (requires `Authorization: Bearer <access_token>`)
-- `POST /channels` (requires `Authorization: Bearer <access_token>`)
-- Optional header for the above org-scoped routes: `x-organization-id: <uuid>`
+## Orgs, channels, messages (api-server)
+- Orgs:
+  - `POST /orgs`
+  - `GET /orgs`
+  - `GET /orgs/:org_id`
+  - `GET /orgs/:org_id/members`
+  - `POST /orgs/:org_id/invites`
+  - `POST /orgs/:org_id/members`
+- Channels:
+  - `GET /orgs/:org_id/channels`
+  - `POST /orgs/:org_id/channels`
+  - `GET /channels/:channel_id`
+  - `PATCH /channels/:channel_id`
+  - `DELETE /channels/:channel_id`
+- Messages:
+  - `GET /channels/:channel_id/messages?limit=50&before=<message_id_or_rfc3339>`
+  - `POST /channels/:channel_id/messages`
+  - `PATCH /messages/:message_id`
+  - `DELETE /messages/:message_id`
+  - `POST /messages/:message_id/reactions`
+  - `DELETE /messages/:message_id/reactions/:emoji`
 
 ## Layout
 - `apps/api-server` Axum HTTP API (MVC + Service + Repository)

@@ -95,5 +95,70 @@ impl MembershipRepository {
 
         Ok(maybe.map(|row| row.try_get::<Uuid, _>("organization_id")).transpose()?)
     }
-}
 
+    pub async fn list_members_with_users(
+        &self,
+        organization_id: Uuid,
+        limit: i64,
+    ) -> Result<Vec<(MembershipRow, String, String)>, sqlx::Error> {
+        let rows = sqlx::query(
+            r#"
+            select
+              om.organization_id,
+              om.user_id,
+              om.role,
+              om.joined_at,
+              u.email,
+              u.display_name
+            from organization_members om
+            join users u on u.id = om.user_id
+            where om.organization_id = $1
+            order by om.joined_at asc
+            limit $2
+            "#,
+        )
+        .bind(organization_id)
+        .bind(limit)
+        .fetch_all(&self.pool)
+        .await?;
+
+        rows.into_iter()
+            .map(|row| {
+                Ok((
+                    MembershipRow {
+                        organization_id: row.try_get("organization_id")?,
+                        user_id: row.try_get("user_id")?,
+                        role: row.try_get("role")?,
+                        joined_at: row.try_get("joined_at")?,
+                    },
+                    row.try_get("email")?,
+                    row.try_get("display_name")?,
+                ))
+            })
+            .collect()
+    }
+
+    pub async fn list_orgs_for_user(
+        &self,
+        user_id: Uuid,
+        limit: i64,
+    ) -> Result<Vec<Uuid>, sqlx::Error> {
+        let rows = sqlx::query(
+            r#"
+            select organization_id
+            from organization_members
+            where user_id = $1
+            order by joined_at asc
+            limit $2
+            "#,
+        )
+        .bind(user_id)
+        .bind(limit)
+        .fetch_all(&self.pool)
+        .await?;
+
+        rows.into_iter()
+            .map(|row| row.try_get::<Uuid, _>("organization_id"))
+            .collect()
+    }
+}

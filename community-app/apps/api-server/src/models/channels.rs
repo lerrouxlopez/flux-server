@@ -9,6 +9,12 @@ pub struct CreateChannelRequest {
     pub kind: ChannelKind,
 }
 
+#[derive(Debug, Deserialize)]
+pub struct UpdateChannelRequest {
+    pub name: Option<String>,
+    pub kind: Option<ChannelKind>,
+}
+
 #[derive(Debug, Serialize)]
 pub struct ChannelView {
     pub id: Uuid,
@@ -26,4 +32,19 @@ pub struct ListChannelsResponse {
 #[derive(Debug, Serialize)]
 pub struct CreateChannelResponse {
     pub channel: ChannelView,
+}
+
+#[derive(Debug, Serialize)]
+pub struct GetChannelResponse {
+    pub channel: ChannelView,
+}
+
+#[derive(Debug, Serialize)]
+pub struct UpdateChannelResponse {
+    pub channel: ChannelView,
+}
+
+#[derive(Debug, Serialize)]
+pub struct DeleteChannelResponse {
+    pub ok: bool,
 }

@@ -96,4 +96,90 @@ impl ChannelRepository {
             })
             .collect()
     }
+
+    pub async fn find_by_id(&self, channel_id: Uuid) -> Result<Option<ChannelRow>, sqlx::Error> {
+        let maybe = sqlx::query(
+            r#"
+            select id, organization_id, name, kind, created_at
+            from channels
+            where id = $1
+            "#,
+        )
+        .bind(channel_id)
+        .fetch_optional(&self.pool)
+        .await?;
+
+        let Some(row) = maybe else {
+            return Ok(None);
+        };
+
+        let kind_str: String = row.try_get("kind")?;
+        let kind = ChannelKind::try_from(kind_str.as_str()).map_err(|_| sqlx::Error::ColumnDecode {
+            index: "kind".into(),
+            source: Box::new(std::fmt::Error),
+        })?;
+
+        Ok(Some(ChannelRow {
+            id: row.try_get("id")?,
+            organization_id: row.try_get("organization_id")?,
+            name: row.try_get("name")?,
+            kind,
+            created_at: row.try_get("created_at")?,
+        }))
+    }
+
+    pub async fn update_channel(
+        &self,
+        channel_id: Uuid,
+        name: Option<&str>,
+        kind: Option<ChannelKind>,
+    ) -> Result<Option<ChannelRow>, sqlx::Error> {
+        let maybe = sqlx::query(
+            r#"
+            update channels
+            set
+              name = coalesce($2, name),
+              kind = coalesce($3, kind)
+            where id = $1
+            returning id, organization_id, name, kind, created_at
+            "#,
+        )
+        .bind(channel_id)
+        .bind(name)
+        .bind(kind.map(|k| k.as_str()))
+        .fetch_optional(&self.pool)
+        .await?;
+
+        let Some(row) = maybe else {
+            return Ok(None);
+        };
+
+        let kind_str: String = row.try_get("kind")?;
+        let kind = ChannelKind::try_from(kind_str.as_str()).map_err(|_| sqlx::Error::ColumnDecode {
+            index: "kind".into(),
+            source: Box::new(std::fmt::Error),
+        })?;
+
+        Ok(Some(ChannelRow {
+            id: row.try_get("id")?,
+            organization_id: row.try_get("organization_id")?,
+            name: row.try_get("name")?,
+            kind,
+            created_at: row.try_get("created_at")?,
+        }))
+    }
+
+    pub async fn delete_channel(&self, channel_id: Uuid) -> Result<bool, sqlx::Error> {
+        let res = sqlx::query(
+            r#"
+            delete from channels
+            where id = $1
+            "#,
+        )
+        .bind(channel_id)
+        .execute(&self.pool)
+        .await?;
+
+        Ok(res.rows_affected() == 1)
+    }
 }

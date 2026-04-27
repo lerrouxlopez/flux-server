@@ -33,6 +33,7 @@ pub fn router(state: AppState) -> Router {
         .merge(controllers::auth::router())
         .merge(controllers::orgs::router())
         .merge(controllers::channels::router())
+        .merge(controllers::messages::router())
         .with_state(state.clone())
         .layer(from_fn_with_state(state, middleware::auth::auth_extractor))
         .layer(DefaultBodyLimit::max(json_limit_bytes))

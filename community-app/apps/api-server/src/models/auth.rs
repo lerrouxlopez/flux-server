@@ -81,6 +81,20 @@ impl ApiError {
         }
     }
 
+    pub fn forbidden() -> Self {
+        Self {
+            status: StatusCode::FORBIDDEN,
+            error: "forbidden",
+        }
+    }
+
+    pub fn not_found() -> Self {
+        Self {
+            status: StatusCode::NOT_FOUND,
+            error: "not_found",
+        }
+    }
+
     pub fn conflict() -> Self {
         Self {
             status: StatusCode::CONFLICT,

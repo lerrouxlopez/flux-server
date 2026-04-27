@@ -3,6 +3,7 @@ use time::OffsetDateTime;
 use uuid::Uuid;
 
 use crate::repositories::MembershipRow;
+use serde_json::Value;
 
 #[derive(Debug, Clone)]
 pub struct OrganizationRow {
@@ -74,6 +75,98 @@ impl OrgRepository {
                 joined_at: membership_row.try_get("joined_at")?,
             },
         ))
+    }
+
+    pub async fn create_org_with_defaults(
+        &self,
+        org_id: Uuid,
+        slug: &str,
+        name: &str,
+        creator_id: Uuid,
+        owner_permissions: &Value,
+        member_permissions: &Value,
+    ) -> Result<OrganizationRow, sqlx::Error> {
+        let mut tx = self.pool.begin().await?;
+
+        let org_row = sqlx::query(
+            r#"
+            insert into organizations (id, slug, name)
+            values ($1, $2, $3)
+            returning id, slug, name, created_at
+            "#,
+        )
+        .bind(org_id)
+        .bind(slug)
+        .bind(name)
+        .fetch_one(&mut *tx)
+        .await?;
+
+        // Creator membership
+        sqlx::query(
+            r#"
+            insert into organization_members (organization_id, user_id, role)
+            values ($1, $2, 'owner')
+            "#,
+        )
+        .bind(org_id)
+        .bind(creator_id)
+        .execute(&mut *tx)
+        .await?;
+
+        // Default roles
+        sqlx::query(
+            r#"
+            insert into roles (id, organization_id, name, permissions)
+            values
+              ($1, $3, 'owner', $4),
+              ($2, $3, 'member', $5)
+            "#,
+        )
+        .bind(Uuid::now_v7())
+        .bind(Uuid::now_v7())
+        .bind(org_id)
+        .bind(owner_permissions)
+        .bind(member_permissions)
+        .execute(&mut *tx)
+        .await?;
+
+        // Default channels
+        sqlx::query(
+            r#"
+            insert into channels (id, organization_id, name, kind)
+            values
+              ($1, $4, 'general', 'text'),
+              ($2, $4, 'announcements', 'announcement'),
+              ($3, $4, 'General Voice', 'voice')
+            "#,
+        )
+        .bind(Uuid::now_v7())
+        .bind(Uuid::now_v7())
+        .bind(Uuid::now_v7())
+        .bind(org_id)
+        .execute(&mut *tx)
+        .await?;
+
+        // Default branding
+        sqlx::query(
+            r#"
+            insert into branding_profiles (organization_id, app_name)
+            values ($1, $2)
+            "#,
+        )
+        .bind(org_id)
+        .bind(name)
+        .execute(&mut *tx)
+        .await?;
+
+        tx.commit().await?;
+
+        Ok(OrganizationRow {
+            id: org_row.try_get("id")?,
+            slug: org_row.try_get("slug")?,
+            name: org_row.try_get("name")?,
+            created_at: org_row.try_get("created_at")?,
+        })
     }
 
     pub async fn insert_org(
