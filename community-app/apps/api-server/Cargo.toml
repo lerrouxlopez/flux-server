@@ -12,6 +12,7 @@ base64.workspace = true
 config = { path = "../../crates/config" }
 db = { path = "../../crates/db" }
 dotenvy.workspace = true
+domain = { path = "../../crates/domain" }
 jsonwebtoken.workspace = true
 rand.workspace = true
 serde.workspace = true

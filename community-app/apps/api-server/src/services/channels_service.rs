@@ -57,14 +57,9 @@ impl ChannelsService {
             return Err(ApiError::bad_request());
         }
 
-        let kind = req.kind.trim();
-        if kind.is_empty() || kind.len() > 32 {
-            return Err(ApiError::bad_request());
-        }
-
         let row = self
             .channels
-            .insert_channel(Uuid::now_v7(), organization_id, name, kind)
+            .insert_channel(Uuid::now_v7(), organization_id, name, req.kind)
             .await
             .map_err(|_| ApiError::internal())?;
 
@@ -90,4 +85,3 @@ impl ChannelsService {
         Ok(())
     }
 }
-

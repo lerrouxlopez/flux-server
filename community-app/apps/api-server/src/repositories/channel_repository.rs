@@ -1,13 +1,14 @@
 use sqlx::{PgPool, Row};
 use time::OffsetDateTime;
 use uuid::Uuid;
+use domain::ChannelKind;
 
 #[derive(Debug, Clone)]
 pub struct ChannelRow {
     pub id: Uuid,
     pub organization_id: Uuid,
     pub name: String,
-    pub kind: String,
+    pub kind: ChannelKind,
     pub created_at: OffsetDateTime,
 }
 
@@ -26,7 +27,7 @@ impl ChannelRepository {
         id: Uuid,
         organization_id: Uuid,
         name: &str,
-        kind: &str,
+        kind: ChannelKind,
     ) -> Result<ChannelRow, sqlx::Error> {
         let row = sqlx::query(
             r#"
@@ -38,15 +39,22 @@ impl ChannelRepository {
         .bind(id)
         .bind(organization_id)
         .bind(name)
-        .bind(kind)
+        .bind(kind.as_str())
         .fetch_one(&self.pool)
         .await?;
+
+        let kind_str: String = row.try_get("kind")?;
+        let kind = ChannelKind::try_from(kind_str.as_str())
+            .map_err(|_| sqlx::Error::ColumnDecode {
+                index: "kind".into(),
+                source: Box::new(std::fmt::Error),
+            })?;
 
         Ok(ChannelRow {
             id: row.try_get("id")?,
             organization_id: row.try_get("organization_id")?,
             name: row.try_get("name")?,
-            kind: row.try_get("kind")?,
+            kind,
             created_at: row.try_get("created_at")?,
         })
     }
@@ -72,15 +80,20 @@ impl ChannelRepository {
 
         rows.into_iter()
             .map(|row| {
+                let kind_str: String = row.try_get("kind")?;
+                let kind = ChannelKind::try_from(kind_str.as_str())
+                    .map_err(|_| sqlx::Error::ColumnDecode {
+                        index: "kind".into(),
+                        source: Box::new(std::fmt::Error),
+                    })?;
                 Ok(ChannelRow {
                     id: row.try_get("id")?,
                     organization_id: row.try_get("organization_id")?,
                     name: row.try_get("name")?,
-                    kind: row.try_get("kind")?,
+                    kind,
                     created_at: row.try_get("created_at")?,
                 })
             })
             .collect()
     }
 }
-

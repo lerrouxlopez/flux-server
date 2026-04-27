@@ -1,11 +1,12 @@
 use serde::{Deserialize, Serialize};
 use time::OffsetDateTime;
 use uuid::Uuid;
+use domain::ChannelKind;
 
 #[derive(Debug, Deserialize)]
 pub struct CreateChannelRequest {
     pub name: String,
-    pub kind: String,
+    pub kind: ChannelKind,
 }
 
 #[derive(Debug, Serialize)]
@@ -13,7 +14,7 @@ pub struct ChannelView {
     pub id: Uuid,
     pub organization_id: Uuid,
     pub name: String,
-    pub kind: String,
+    pub kind: ChannelKind,
     pub created_at: OffsetDateTime,
 }
 
@@ -26,4 +27,3 @@ pub struct ListChannelsResponse {
 pub struct CreateChannelResponse {
     pub channel: ChannelView,
 }
-
