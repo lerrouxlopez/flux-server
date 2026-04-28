@@ -21,7 +21,7 @@ async fn main() -> anyhow::Result<()> {
         ))
         .layer(TraceLayer::new_for_http());
 
-    let addr = SocketAddr::from(([0, 0, 0, 0], cfg.port));
+    let addr: SocketAddr = cfg.http_addr.parse()?;
     info!(%addr, "api-server listening");
     let listener = tokio::net::TcpListener::bind(addr).await?;
     axum::serve(listener, app).await?;

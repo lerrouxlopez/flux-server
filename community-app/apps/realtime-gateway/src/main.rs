@@ -24,7 +24,7 @@ async fn main() -> anyhow::Result<()> {
         .with_state(state)
         .layer(TraceLayer::new_for_http());
 
-    let addr = SocketAddr::from(([0, 0, 0, 0], cfg.realtime_port));
+    let addr: SocketAddr = cfg.ws_addr.parse()?;
     info!(%addr, "realtime-gateway listening");
     let listener = tokio::net::TcpListener::bind(addr).await?;
     axum::serve(listener, app).await?;
@@ -34,4 +34,3 @@ async fn main() -> anyhow::Result<()> {
 async fn ws_handler(State(state): State<AppState>, ws: axum::extract::WebSocketUpgrade) -> impl IntoResponse {
     ws.on_upgrade(move |socket| realtime::ws::handle_socket(state.hub, socket))
 }
-

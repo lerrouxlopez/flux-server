@@ -21,8 +21,12 @@ Centralized, multi-tenant collaboration platform (Discord/Slack/Zoom-style).
    - `cargo run -p worker`
 
 Health checks:
-- API: `curl http://localhost:3000/health`
-- Realtime: `curl http://localhost:3001/health`
+- API: `curl http://localhost:8080/health`
+- Realtime: `curl http://localhost:8081/health`
+
+### LiveKit local vs prod
+- Local: `docker compose` runs LiveKit with `--dev` for convenience only.
+- Prod: use proper keys, TLS, TURN/STUN, and an explicit LiveKit config (do not use `--dev`).
 
 ### Windows + WSL notes
 - Recommended: run `cargo` inside WSL (Linux toolchain), and run `docker compose` either inside WSL or via Docker Desktop WSL integration.

@@ -10,8 +10,8 @@ use uuid::Uuid;
 
 #[derive(Debug, Clone)]
 pub struct AuthConfig {
-    pub jwt_secret: String,
-    pub refresh_token_pepper: String,
+    pub jwt_access_secret: String,
+    pub jwt_refresh_secret: String,
     pub access_ttl: Duration,
 }
 
@@ -52,14 +52,14 @@ pub fn issue_access_token(cfg: &AuthConfig, user_id: Uuid, org_id: Option<Uuid>)
     Ok(jsonwebtoken::encode(
         &Header::default(),
         &claims,
-        &EncodingKey::from_secret(cfg.jwt_secret.as_bytes()),
+        &EncodingKey::from_secret(cfg.jwt_access_secret.as_bytes()),
     )?)
 }
 
 pub fn decode_access_token(cfg: &AuthConfig, token: &str) -> anyhow::Result<Claims> {
     Ok(jsonwebtoken::decode::<Claims>(
         token,
-        &DecodingKey::from_secret(cfg.jwt_secret.as_bytes()),
+        &DecodingKey::from_secret(cfg.jwt_access_secret.as_bytes()),
         &Validation::default(),
     )?
     .claims)
@@ -73,7 +73,7 @@ pub fn new_refresh_token() -> String {
 
 pub fn hash_refresh_token(cfg: &AuthConfig, refresh_token: &str) -> String {
     let mut hasher = Sha256::new();
-    hasher.update(cfg.refresh_token_pepper.as_bytes());
+    hasher.update(cfg.jwt_refresh_secret.as_bytes());
     hasher.update(b":");
     hasher.update(refresh_token.as_bytes());
     format!("{:x}", hasher.finalize())

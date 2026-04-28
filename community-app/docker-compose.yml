@@ -2,13 +2,13 @@ services:
   postgres:
     image: postgres:16
     environment:
-      POSTGRES_PASSWORD: postgres
-      POSTGRES_USER: postgres
-      POSTGRES_DB: community
+      POSTGRES_USER: app
+      POSTGRES_PASSWORD: app
+      POSTGRES_DB: community_app
     ports:
       - "5432:5432"
     volumes:
-      - pgdata:/var/lib/postgresql/data
+      - postgres_data:/var/lib/postgresql/data
 
   redis:
     image: redis:7
@@ -16,22 +16,19 @@ services:
       - "6379:6379"
 
   nats:
-    image: nats:2.10
-    command: ["-js", "-m", "8222"]
+    image: nats:2
+    command: ["-js"]
     ports:
       - "4222:4222"
       - "8222:8222"
 
   livekit:
-    image: livekit/livekit-server:v1.7
-    command: ["--dev", "--bind", "0.0.0.0"]
-    environment:
-      LIVEKIT_KEYS: "devkey:devsecret"
+    image: livekit/livekit-server:latest
+    command: ["--dev"]
     ports:
-      - "7880:7880"   # HTTP
-      - "7881:7881"   # WebRTC UDP/TCP (dev; keep open if needed)
+      - "7880:7880"
+      - "7881:7881"
       - "7882:7882/udp"
 
 volumes:
-  pgdata: {}
-
+  postgres_data:
