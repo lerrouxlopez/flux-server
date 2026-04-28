@@ -1,4 +1,7 @@
-use argon2::{password_hash::SaltString, Argon2, PasswordHash, PasswordHasher, PasswordVerifier};
+use argon2::{
+    password_hash::SaltString, Algorithm, Argon2, Params, PasswordHash, PasswordHasher,
+    PasswordVerifier, Version,
+};
 use base64::Engine;
 use jsonwebtoken::{DecodingKey, EncodingKey, Header, Validation};
 use rand::rngs::OsRng;
@@ -13,19 +16,21 @@ pub struct AuthConfig {
     pub jwt_access_secret: String,
     pub jwt_refresh_secret: String,
     pub access_ttl: Duration,
+    pub refresh_ttl: Duration,
 }
 
 #[derive(Debug, Serialize, Deserialize)]
 pub struct Claims {
     pub sub: String,
-    pub org: Option<String>,
     pub exp: usize,
     pub iat: usize,
+    pub typ: String,
 }
 
 pub fn hash_password(password: &str) -> anyhow::Result<String> {
     let salt = SaltString::generate(&mut OsRng);
-    let argon2 = Argon2::default();
+    let params = Params::default();
+    let argon2 = Argon2::new(Algorithm::Argon2id, Version::V0x13, params);
     let hashed = argon2
         .hash_password(password.as_bytes(), &salt)
         .map_err(|e| anyhow::anyhow!(e.to_string()))?;
@@ -40,14 +45,14 @@ pub fn verify_password(password: &str, password_hash: &str) -> anyhow::Result<bo
         .is_ok())
 }
 
-pub fn issue_access_token(cfg: &AuthConfig, user_id: Uuid, org_id: Option<Uuid>) -> anyhow::Result<String> {
+pub fn issue_access_token(cfg: &AuthConfig, user_id: Uuid) -> anyhow::Result<String> {
     let now = OffsetDateTime::now_utc();
     let exp = now + cfg.access_ttl;
     let claims = Claims {
         sub: user_id.to_string(),
-        org: org_id.map(|o| o.to_string()),
         iat: now.unix_timestamp() as usize,
         exp: exp.unix_timestamp() as usize,
+        typ: "access".to_string(),
     };
     Ok(jsonwebtoken::encode(
         &Header::default(),
@@ -57,12 +62,16 @@ pub fn issue_access_token(cfg: &AuthConfig, user_id: Uuid, org_id: Option<Uuid>)
 }
 
 pub fn decode_access_token(cfg: &AuthConfig, token: &str) -> anyhow::Result<Claims> {
-    Ok(jsonwebtoken::decode::<Claims>(
+    let claims = jsonwebtoken::decode::<Claims>(
         token,
         &DecodingKey::from_secret(cfg.jwt_access_secret.as_bytes()),
         &Validation::default(),
     )?
-    .claims)
+    .claims;
+    if claims.typ != "access" {
+        anyhow::bail!("invalid token type");
+    }
+    Ok(claims)
 }
 
 pub fn new_refresh_token() -> String {
