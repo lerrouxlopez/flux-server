@@ -1,3 +1,5 @@
+create extension if not exists pgcrypto;
+
 create table if not exists organizations (
   id uuid primary key,
   slug text not null unique,
@@ -31,3 +33,4 @@ create table if not exists channels (
 
 create index if not exists channels_org_idx on channels (organization_id);
 
+create index if not exists org_members_user_idx on organization_members (user_id);
