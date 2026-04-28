@@ -14,9 +14,14 @@ create table if not exists roles (
 create index if not exists roles_org_idx on roles (organization_id);
 
 -- Constrain channel kinds
-alter table channels
-  add constraint if not exists channels_kind_check
-  check (kind in ('text', 'voice', 'announcement', 'private'));
+do $$
+begin
+  alter table channels
+    add constraint channels_kind_check
+    check (kind in ('text', 'voice', 'announcement', 'private'));
+exception
+  when duplicate_object then null;
+end $$;
 
 -- Messages (soft-delete via deleted_at)
 create table if not exists messages (
@@ -31,9 +36,14 @@ create table if not exists messages (
   deleted_at timestamptz
 );
 
-alter table messages
-  add constraint if not exists messages_kind_check
-  check (kind in ('text', 'system', 'attachment'));
+do $$
+begin
+  alter table messages
+    add constraint messages_kind_check
+    check (kind in ('text', 'system', 'attachment'));
+exception
+  when duplicate_object then null;
+end $$;
 
 -- Required indexes (plus an extra composite for keyset pagination)
 create index if not exists messages_channel_created_idx
@@ -84,9 +94,14 @@ create table if not exists media_rooms (
   created_at timestamptz not null default now()
 );
 
-alter table media_rooms
-  add constraint if not exists media_rooms_kind_check
-  check (kind in ('voice', 'meeting', 'stage'));
+do $$
+begin
+  alter table media_rooms
+    add constraint media_rooms_kind_check
+    check (kind in ('voice', 'meeting', 'stage'));
+exception
+  when duplicate_object then null;
+end $$;
 
 create index if not exists media_rooms_org_idx
   on media_rooms (organization_id);
@@ -154,4 +169,3 @@ create table if not exists audit_logs (
 );
 
 create index if not exists audit_logs_org_created_idx on audit_logs (organization_id, created_at desc);
-

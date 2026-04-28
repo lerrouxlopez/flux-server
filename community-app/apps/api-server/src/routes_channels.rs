@@ -14,9 +14,9 @@ use uuid::Uuid;
 
 pub fn router() -> Router<AppState> {
     Router::new()
-        .route("/orgs/:org_id/channels", get(list_org_channels).post(create_channel))
+        .route("/orgs/{org_id}/channels", get(list_org_channels).post(create_channel))
         .route(
-            "/channels/:channel_id",
+            "/channels/{channel_id}",
             get(get_channel).patch(update_channel).delete(delete_channel),
         )
 }

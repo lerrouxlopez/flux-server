@@ -17,10 +17,13 @@ use uuid::Uuid;
 
 pub fn router() -> Router<AppState> {
     Router::new()
-        .route("/channels/:channel_id/messages", get(list_messages).post(send_message))
-        .route("/messages/:message_id", patch(edit_message).delete(delete_message))
-        .route("/messages/:message_id/reactions", post(add_reaction))
-        .route("/messages/:message_id/reactions/:emoji", delete(remove_reaction))
+        .route("/channels/{channel_id}/messages", get(list_messages).post(send_message))
+        .route("/messages/{message_id}", patch(edit_message).delete(delete_message))
+        .route("/messages/{message_id}/reactions", post(add_reaction))
+        .route(
+            "/messages/{message_id}/reactions/{emoji}",
+            delete(remove_reaction),
+        )
 }
 
 #[derive(Debug, Deserialize)]

@@ -20,9 +20,9 @@ use crate::util;
 pub fn router() -> Router<AppState> {
     Router::new()
         .route("/", post(create_org).get(list_orgs))
-        .route("/:org_id", get(get_org))
-        .route("/:org_id/members", get(list_members).post(add_member))
-        .route("/:org_id/invites", post(create_invite))
+        .route("/{org_id}", get(get_org))
+        .route("/{org_id}/members", get(list_members).post(add_member))
+        .route("/{org_id}/invites", post(create_invite))
 }
 
 #[derive(Debug, Deserialize)]
