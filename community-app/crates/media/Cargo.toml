@@ -1,0 +1,10 @@
+[package]
+name = "media"
+edition.workspace = true
+license.workspace = true
+version.workspace = true
+
+[dependencies]
+reqwest.workspace = true
+serde.workspace = true
+

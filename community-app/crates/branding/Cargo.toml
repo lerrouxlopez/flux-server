@@ -1,0 +1,10 @@
+[package]
+name = "branding"
+edition.workspace = true
+license.workspace = true
+version.workspace = true
+
+[dependencies]
+domain = { path = "../domain" }
+serde.workspace = true
+

@@ -1,0 +1,14 @@
+[package]
+name = "worker"
+edition.workspace = true
+license.workspace = true
+version.workspace = true
+
+[dependencies]
+anyhow.workspace = true
+config = { path = "../../crates/config" }
+dotenvy.workspace = true
+events = { path = "../../crates/events" }
+telemetry = { path = "../../crates/telemetry" }
+tokio.workspace = true
+tracing.workspace = true
