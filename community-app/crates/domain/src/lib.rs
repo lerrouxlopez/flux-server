@@ -2,6 +2,8 @@ use serde::{Deserialize, Serialize};
 use time::OffsetDateTime;
 use uuid::Uuid;
 
+pub mod api_error;
+
 // ---- Organizations / membership ----
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -79,6 +81,7 @@ pub struct MediaRoom {
     pub channel_id: Option<Uuid>,
     pub livekit_room_name: String,
     pub kind: MediaRoomKind,
+    pub name: String,
     pub created_by: Uuid,
     pub created_at: OffsetDateTime,
 }
@@ -108,4 +111,3 @@ pub struct BrandingProfile {
     pub created_at: OffsetDateTime,
     pub updated_at: OffsetDateTime,
 }
-

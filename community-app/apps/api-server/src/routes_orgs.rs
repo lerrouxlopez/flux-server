@@ -16,6 +16,7 @@ use time::OffsetDateTime;
 use uuid::Uuid;
 
 use crate::util;
+use domain::api_error::ApiErrorCode;
 
 pub fn router() -> Router<AppState> {
     Router::new()
@@ -84,18 +85,51 @@ async fn create_org(
     let name = req.name.trim().to_string();
     let slug = req.slug.trim().to_lowercase();
     if name.is_empty() || slug.is_empty() {
-        return api_error(StatusCode::BAD_REQUEST, "invalid_request");
+        return util::api_error(ApiErrorCode::ValidationError);
     }
 
     let org_id = Uuid::now_v7();
     let now = OffsetDateTime::now_utc();
 
     let owner_permissions: Perms = perms::ALL;
-    let member_permissions: Perms = perms::CHANNELS_VIEW | perms::MESSAGES_SEND;
+    let admin_permissions: Perms = perms::ORG_MANAGE
+        | perms::ORG_MANAGE_MEMBERS
+        | perms::ORG_INVITES_CREATE
+        | perms::BRANDING_MANAGE
+        | perms::ADMIN_AUDIT_LOG_VIEW
+        | perms::CHANNELS_VIEW
+        | perms::CHANNELS_CREATE
+        | perms::CHANNELS_MANAGE
+        | perms::MESSAGES_SEND
+        | perms::MESSAGES_EDIT_OWN
+        | perms::MESSAGES_DELETE_OWN
+        | perms::MESSAGES_DELETE_ANY
+        | perms::MESSAGES_REACT
+        | perms::MEDIA_ROOMS_CREATE
+        | perms::VOICE_JOIN
+        | perms::VOICE_SPEAK
+        | perms::VIDEO_START
+        | perms::SCREEN_SHARE;
+
+    let moderator_permissions: Perms = perms::CHANNELS_VIEW
+        | perms::MESSAGES_SEND
+        | perms::MESSAGES_DELETE_ANY
+        | perms::MESSAGES_REACT
+        | perms::VOICE_JOIN;
+
+    let member_permissions: Perms = perms::CHANNELS_VIEW
+        | perms::MESSAGES_SEND
+        | perms::MESSAGES_EDIT_OWN
+        | perms::MESSAGES_DELETE_OWN
+        | perms::MESSAGES_REACT
+        | perms::VOICE_JOIN
+        | perms::VOICE_SPEAK;
+
+    let guest_permissions: Perms = perms::CHANNELS_VIEW | perms::VOICE_JOIN;
 
     let mut tx = match state.pool.begin().await {
         Ok(tx) => tx,
-        Err(_) => return api_error(StatusCode::INTERNAL_SERVER_ERROR, "db_error"),
+        Err(_) => return util::api_error(ApiErrorCode::InternalError),
     };
 
     let org_inserted = sqlx::query(
@@ -112,32 +146,44 @@ async fn create_org(
     .await;
     if let Err(err) = org_inserted {
         if util::is_unique_violation(&err) {
-            return api_error(StatusCode::CONFLICT, "slug_taken");
+            return util::api_error(ApiErrorCode::Conflict);
         }
-        return api_error(StatusCode::INTERNAL_SERVER_ERROR, "db_error");
+        return util::api_error(ApiErrorCode::InternalError);
     }
 
     // Default roles
     let owner_role_id = Uuid::now_v7();
+    let admin_role_id = Uuid::now_v7();
+    let moderator_role_id = Uuid::now_v7();
     let member_role_id = Uuid::now_v7();
+    let guest_role_id = Uuid::now_v7();
 
     let roles_insert = sqlx::query(
         r#"
         insert into roles (id, organization_id, name, permissions)
         values
-          ($1, $4, 'owner', $2),
-          ($3, $4, 'member', $5)
+          ($1, $6, 'owner', $2),
+          ($3, $6, 'admin', $4),
+          ($5, $6, 'moderator', $7),
+          ($8, $6, 'member', $9),
+          ($10, $6, 'guest', $11)
         "#,
     )
     .bind(owner_role_id)
     .bind(owner_permissions)
-    .bind(member_role_id)
+    .bind(admin_role_id)
+    .bind(admin_permissions)
+    .bind(moderator_role_id)
     .bind(org_id)
+    .bind(moderator_permissions)
+    .bind(member_role_id)
     .bind(member_permissions)
+    .bind(guest_role_id)
+    .bind(guest_permissions)
     .execute(&mut *tx)
     .await;
     if roles_insert.is_err() {
-        return api_error(StatusCode::INTERNAL_SERVER_ERROR, "db_error");
+        return util::api_error(ApiErrorCode::InternalError);
     }
 
     // Creator membership
@@ -153,7 +199,7 @@ async fn create_org(
     .execute(&mut *tx)
     .await;
     if member_insert.is_err() {
-        return api_error(StatusCode::INTERNAL_SERVER_ERROR, "db_error");
+        return util::api_error(ApiErrorCode::InternalError);
     }
 
     // Default channels
@@ -178,7 +224,7 @@ async fn create_org(
     .execute(&mut *tx)
     .await;
     if channels_insert.is_err() {
-        return api_error(StatusCode::INTERNAL_SERVER_ERROR, "db_error");
+        return util::api_error(ApiErrorCode::InternalError);
     }
 
     // Default branding profile
@@ -194,11 +240,11 @@ async fn create_org(
     .execute(&mut *tx)
     .await;
     if branding_insert.is_err() {
-        return api_error(StatusCode::INTERNAL_SERVER_ERROR, "db_error");
+        return util::api_error(ApiErrorCode::InternalError);
     }
 
     if tx.commit().await.is_err() {
-        return api_error(StatusCode::INTERNAL_SERVER_ERROR, "db_error");
+        return util::api_error(ApiErrorCode::InternalError);
     }
 
     (
@@ -229,7 +275,7 @@ async fn list_orgs(State(state): State<AppState>, Extension(auth): Extension<Aut
 
     let rows = match rows {
         Ok(r) => r,
-        Err(_) => return api_error(StatusCode::INTERNAL_SERVER_ERROR, "db_error"),
+        Err(_) => return util::api_error(ApiErrorCode::InternalError),
     };
 
     let organizations = rows
@@ -254,7 +300,7 @@ async fn get_org(
         .await
         .unwrap_or(false)
     {
-        return util::api_error(StatusCode::FORBIDDEN, "not_a_member");
+        return util::api_error(ApiErrorCode::PermissionDenied);
     }
 
     let row = sqlx::query(
@@ -270,9 +316,9 @@ async fn get_org(
 
     let Some(row) = (match row {
         Ok(r) => r,
-        Err(_) => return util::api_error(StatusCode::INTERNAL_SERVER_ERROR, "db_error"),
+        Err(_) => return util::api_error(ApiErrorCode::InternalError),
     }) else {
-        return util::api_error(StatusCode::NOT_FOUND, "not_found");
+        return util::api_error(ApiErrorCode::NotFound);
     };
 
     (
@@ -296,7 +342,7 @@ async fn list_members(
         .await
         .unwrap_or(false)
     {
-        return util::api_error(StatusCode::FORBIDDEN, "not_a_member");
+        return util::api_error(ApiErrorCode::PermissionDenied);
     }
 
     let rows = sqlx::query(
@@ -313,7 +359,7 @@ async fn list_members(
 
     let rows = match rows {
         Ok(r) => r,
-        Err(_) => return util::api_error(StatusCode::INTERNAL_SERVER_ERROR, "db_error"),
+        Err(_) => return util::api_error(ApiErrorCode::InternalError),
     };
 
     let members = rows
@@ -339,7 +385,7 @@ async fn create_invite(
         Err(e) => return e,
     };
     if !permissions::has(perms, perms::ORGS_INVITES_CREATE) {
-        return util::api_error(StatusCode::FORBIDDEN, "forbidden");
+        return util::api_error(ApiErrorCode::PermissionDenied);
     }
 
     let mut bytes = [0u8; 18];
@@ -379,7 +425,7 @@ async fn create_invite(
             }),
         )
             .into_response(),
-        Err(_) => util::api_error(StatusCode::INTERNAL_SERVER_ERROR, "db_error"),
+        Err(_) => util::api_error(ApiErrorCode::InternalError),
     }
 }
 
@@ -398,7 +444,7 @@ async fn add_member(
             Err(e) => return e,
         };
         if !permissions::has(perms, perms::ORGS_MEMBERS_MANAGE) {
-            return util::api_error(StatusCode::FORBIDDEN, "forbidden");
+            return util::api_error(ApiErrorCode::PermissionDenied);
         }
 
         let now = OffsetDateTime::now_utc();
@@ -417,19 +463,19 @@ async fn add_member(
 
         return match res {
             Ok(_) => (StatusCode::OK, Json(serde_json::json!({"status":"ok"}))).into_response(),
-            Err(_) => util::api_error(StatusCode::INTERNAL_SERVER_ERROR, "db_error"),
+            Err(_) => util::api_error(ApiErrorCode::InternalError),
         };
     }
 
     let Some(code) = req.invite_code else {
-        return util::api_error(StatusCode::BAD_REQUEST, "invalid_request");
+        return util::api_error(ApiErrorCode::ValidationError);
     };
 
     // Join via invite_code
     let now = OffsetDateTime::now_utc();
     let mut tx = match state.pool.begin().await {
         Ok(tx) => tx,
-        Err(_) => return util::api_error(StatusCode::INTERNAL_SERVER_ERROR, "db_error"),
+        Err(_) => return util::api_error(ApiErrorCode::InternalError),
     };
 
     let invite = sqlx::query(
@@ -446,9 +492,9 @@ async fn add_member(
 
     let Some(invite) = (match invite {
         Ok(r) => r,
-        Err(_) => return util::api_error(StatusCode::INTERNAL_SERVER_ERROR, "db_error"),
+        Err(_) => return util::api_error(ApiErrorCode::InternalError),
     }) else {
-        return util::api_error(StatusCode::NOT_FOUND, "invalid_invite");
+        return util::api_error(ApiErrorCode::NotFound);
     };
 
     let invite_id: Uuid = invite.get("id");
@@ -457,10 +503,10 @@ async fn add_member(
     let use_count: i32 = invite.get("use_count");
 
     if expires_at.is_some_and(|e| e <= now) {
-        return util::api_error(StatusCode::GONE, "invite_expired");
+        return util::api_error(ApiErrorCode::ValidationError);
     }
     if max_uses.is_some_and(|m| use_count >= m) {
-        return util::api_error(StatusCode::GONE, "invite_maxed");
+        return util::api_error(ApiErrorCode::ValidationError);
     }
 
     let member_insert = sqlx::query(
@@ -476,7 +522,7 @@ async fn add_member(
     .execute(&mut *tx)
     .await;
     if member_insert.is_err() {
-        return util::api_error(StatusCode::INTERNAL_SERVER_ERROR, "db_error");
+        return util::api_error(ApiErrorCode::InternalError);
     }
 
     let bump = sqlx::query(
@@ -490,16 +536,12 @@ async fn add_member(
     .execute(&mut *tx)
     .await;
     if bump.is_err() {
-        return util::api_error(StatusCode::INTERNAL_SERVER_ERROR, "db_error");
+        return util::api_error(ApiErrorCode::InternalError);
     }
 
     if tx.commit().await.is_err() {
-        return util::api_error(StatusCode::INTERNAL_SERVER_ERROR, "db_error");
+        return util::api_error(ApiErrorCode::InternalError);
     }
 
     (StatusCode::OK, Json(serde_json::json!({"status":"ok"}))).into_response()
-}
-
-fn api_error(status: StatusCode, code: &'static str) -> axum::response::Response {
-    util::api_error(status, code)
 }

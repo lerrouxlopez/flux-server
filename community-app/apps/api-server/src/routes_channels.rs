@@ -6,6 +6,7 @@ use axum::{
     routing::get,
     Extension, Router,
 };
+use domain::api_error::ApiErrorCode;
 use permissions::perms;
 use serde::{Deserialize, Serialize};
 use sqlx::Row;
@@ -57,7 +58,7 @@ async fn list_org_channels(
         Err(e) => return e,
     };
     if !permissions::has(perms, perms::CHANNELS_VIEW) {
-        return util::api_error(StatusCode::FORBIDDEN, "forbidden");
+        return util::api_error(ApiErrorCode::PermissionDenied);
     }
 
     let rows = sqlx::query(
@@ -74,7 +75,7 @@ async fn list_org_channels(
 
     let rows = match rows {
         Ok(r) => r,
-        Err(_) => return util::api_error(StatusCode::INTERNAL_SERVER_ERROR, "db_error"),
+        Err(_) => return util::api_error(ApiErrorCode::InternalError),
     };
 
     let channels = rows
@@ -97,12 +98,12 @@ async fn create_channel(
     Path(org_id): Path<Uuid>,
     Json(req): Json<CreateChannelRequest>,
 ) -> impl IntoResponse {
-    let perms = match util::member_perms(&state.pool, org_id, auth.user_id).await {
-        Ok(p) => p,
+    let ok = match util::can(&state.pool, auth.user_id, org_id, permissions::Permission::ChannelsCreate).await {
+        Ok(v) => v,
         Err(e) => return e,
     };
-    if !permissions::has(perms, perms::CHANNELS_CREATE) {
-        return util::api_error(StatusCode::FORBIDDEN, "forbidden");
+    if !ok {
+        return util::api_error(ApiErrorCode::PermissionDenied);
     }
 
     let name = req.name.trim().to_string();
@@ -111,7 +112,7 @@ async fn create_channel(
         Err(e) => return e,
     };
     if name.is_empty() {
-        return util::api_error(StatusCode::BAD_REQUEST, "invalid_request");
+        return util::api_error(ApiErrorCode::ValidationError);
     }
 
     let now = OffsetDateTime::now_utc();
@@ -143,7 +144,7 @@ async fn create_channel(
             }),
         )
             .into_response(),
-        Err(_) => util::api_error(StatusCode::INTERNAL_SERVER_ERROR, "db_error"),
+        Err(_) => util::api_error(ApiErrorCode::InternalError),
     }
 }
 
@@ -165,9 +166,9 @@ async fn get_channel(
 
     let Some(row) = (match row {
         Ok(r) => r,
-        Err(_) => return util::api_error(StatusCode::INTERNAL_SERVER_ERROR, "db_error"),
+        Err(_) => return util::api_error(ApiErrorCode::InternalError),
     }) else {
-        return util::api_error(StatusCode::NOT_FOUND, "not_found");
+        return util::api_error(ApiErrorCode::NotFound);
     };
 
     let org_id: Uuid = row.get("organization_id");
@@ -176,7 +177,7 @@ async fn get_channel(
         Err(e) => return e,
     };
     if !permissions::has(perms, perms::CHANNELS_VIEW) {
-        return util::api_error(StatusCode::FORBIDDEN, "forbidden");
+        return util::api_error(ApiErrorCode::PermissionDenied);
     }
 
     (
@@ -211,9 +212,9 @@ async fn update_channel(
 
     let Some(row) = (match row {
         Ok(r) => r,
-        Err(_) => return util::api_error(StatusCode::INTERNAL_SERVER_ERROR, "db_error"),
+        Err(_) => return util::api_error(ApiErrorCode::InternalError),
     }) else {
-        return util::api_error(StatusCode::NOT_FOUND, "not_found");
+        return util::api_error(ApiErrorCode::NotFound);
     };
 
     let org_id: Uuid = row.get("organization_id");
@@ -222,7 +223,7 @@ async fn update_channel(
         Err(e) => return e,
     };
     if !permissions::has(perms, perms::CHANNELS_MANAGE) {
-        return util::api_error(StatusCode::FORBIDDEN, "forbidden");
+        return util::api_error(ApiErrorCode::PermissionDenied);
     }
 
     let name = req.name.map(|n| n.trim().to_string()).filter(|n| !n.is_empty());
@@ -251,7 +252,7 @@ async fn update_channel(
 
     match updated {
         Ok(_) => (StatusCode::OK, Json(serde_json::json!({"status":"ok"}))).into_response(),
-        Err(_) => util::api_error(StatusCode::INTERNAL_SERVER_ERROR, "db_error"),
+        Err(_) => util::api_error(ApiErrorCode::InternalError),
     }
 }
 
@@ -273,9 +274,9 @@ async fn delete_channel(
 
     let Some(row) = (match row {
         Ok(r) => r,
-        Err(_) => return util::api_error(StatusCode::INTERNAL_SERVER_ERROR, "db_error"),
+        Err(_) => return util::api_error(ApiErrorCode::InternalError),
     }) else {
-        return util::api_error(StatusCode::NOT_FOUND, "not_found");
+        return util::api_error(ApiErrorCode::NotFound);
     };
 
     let org_id: Uuid = row.get("organization_id");
@@ -284,7 +285,7 @@ async fn delete_channel(
         Err(e) => return e,
     };
     if !permissions::has(perms, perms::CHANNELS_MANAGE) {
-        return util::api_error(StatusCode::FORBIDDEN, "forbidden");
+        return util::api_error(ApiErrorCode::PermissionDenied);
     }
 
     let deleted = sqlx::query(r#"delete from channels where id = $1"#)
@@ -294,7 +295,7 @@ async fn delete_channel(
 
     match deleted {
         Ok(_) => (StatusCode::OK, Json(serde_json::json!({"status":"ok"}))).into_response(),
-        Err(_) => util::api_error(StatusCode::INTERNAL_SERVER_ERROR, "db_error"),
+        Err(_) => util::api_error(ApiErrorCode::InternalError),
     }
 }
 
@@ -302,6 +303,6 @@ fn normalize_kind(input: &str) -> Result<String, axum::response::Response> {
     let k = input.trim().to_lowercase();
     match k.as_str() {
         "text" | "voice" | "announcement" | "private" => Ok(k),
-        _ => Err(util::api_error(StatusCode::BAD_REQUEST, "invalid_kind")),
+        _ => Err(util::api_error(ApiErrorCode::ValidationError)),
     }
 }

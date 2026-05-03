@@ -64,11 +64,13 @@ pub async fn ensure_durable_consumer(
     js: &jetstream::Context,
     stream: &str,
     durable_name: &str,
+    filter_subject: Option<&str>,
 ) -> anyhow::Result<consumer::Consumer<consumer::pull::Config>> {
     let s = js.get_stream(stream).await?;
 
     let cfg = consumer::pull::Config {
         durable_name: Some(durable_name.to_string()),
+        filter_subject: filter_subject.unwrap_or("").to_string(),
         ack_policy: consumer::AckPolicy::Explicit,
         ack_wait: std::time::Duration::from_secs(30),
         max_deliver: 10,

@@ -10,6 +10,7 @@ use std::{net::SocketAddr, sync::Arc};
 use tower_http::trace::TraceLayer;
 use tracing::{info, warn};
 use uuid::Uuid;
+use domain::api_error::{ApiError, ApiErrorCode};
 
 mod protocol;
 mod runtime;
@@ -90,23 +91,17 @@ async fn ws_handler(
         });
 
     let Some(token) = token else {
-        return (StatusCode::UNAUTHORIZED, Json(serde_json::json!({"error":"unauthorized"})))
-            .into_response();
+        return ApiError::new(ApiErrorCode::Unauthenticated).into_response();
     };
 
     let claims = match auth::decode_access_token(&state.auth_cfg, &token) {
         Ok(c) => c,
         Err(_) => {
-            return (StatusCode::UNAUTHORIZED, Json(serde_json::json!({"error":"unauthorized"})))
-                .into_response();
+            return ApiError::new(ApiErrorCode::Unauthenticated).into_response();
         }
     };
     let Ok(user_id) = Uuid::parse_str(&claims.sub) else {
-        return (
-            StatusCode::UNAUTHORIZED,
-            Json(serde_json::json!({"error":"unauthorized"})),
-        )
-            .into_response();
+        return ApiError::new(ApiErrorCode::Unauthenticated).into_response();
     };
 
     let org_ids = match load_memberships(&state.pool, user_id).await {
@@ -114,11 +109,7 @@ async fn ws_handler(
         Err(res) => return res,
     };
     if org_ids.is_empty() {
-        return (
-            StatusCode::FORBIDDEN,
-            Json(serde_json::json!({"error":"not_a_member"})),
-        )
-            .into_response();
+        return ApiError::new(ApiErrorCode::PermissionDenied).into_response();
     }
 
     ws.on_upgrade(move |socket| async move {
@@ -157,10 +148,6 @@ async fn load_memberships(pool: &PgPool, user_id: Uuid) -> Result<Vec<Uuid>, axu
 
     match rows {
         Ok(r) => Ok(r),
-        Err(_) => Err((
-            StatusCode::INTERNAL_SERVER_ERROR,
-            Json(serde_json::json!({"error":"db_error"})),
-        )
-            .into_response()),
+        Err(_) => Err(ApiError::new(ApiErrorCode::InternalError).into_response()),
     }
 }

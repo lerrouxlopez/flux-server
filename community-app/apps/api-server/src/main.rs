@@ -19,11 +19,14 @@ use tower_http::{
 };
 use tracing::{info, Level};
 use uuid::Uuid;
+use domain::api_error::{ApiError, ApiErrorCode};
 
 mod routes_auth;
 mod routes_orgs;
 mod routes_channels;
 mod routes_messages;
+mod routes_media;
+mod routes_branding;
 mod util;
 
 #[derive(Clone)]
@@ -32,6 +35,9 @@ pub(crate) struct AppState {
     redis: redis::aio::ConnectionManager,
     nats: async_nats::Client,
     auth_cfg: auth::AuthConfig,
+    livekit_url: String,
+    livekit_api_key: String,
+    livekit_api_secret: String,
 }
 
 #[derive(Debug, Clone)]
@@ -63,6 +69,9 @@ async fn main() -> anyhow::Result<()> {
             access_ttl: time::Duration::seconds(cfg.access_token_ttl_seconds as i64),
             refresh_ttl: time::Duration::seconds(cfg.refresh_token_ttl_seconds as i64),
         },
+        livekit_url: cfg.livekit_url.clone(),
+        livekit_api_key: cfg.livekit_api_key.clone(),
+        livekit_api_secret: cfg.livekit_api_secret.clone(),
     };
     let auth_state = state.clone();
 
@@ -73,6 +82,8 @@ async fn main() -> anyhow::Result<()> {
         .nest("/orgs", routes_orgs::router())
         .merge(routes_channels::router())
         .merge(routes_messages::router())
+        .merge(routes_media::router())
+        .merge(routes_branding::router())
         .route("/healthz", get(healthz))
         .route("/readyz", get(readyz))
         .layer(
@@ -177,14 +188,11 @@ async fn error_middleware(
 ) -> Response {
     let res = next.run(req).await;
     if res.status() == StatusCode::PAYLOAD_TOO_LARGE {
-        return (
-            StatusCode::PAYLOAD_TOO_LARGE,
-            Json(serde_json::json!({
-                "error": "payload_too_large",
-                "message": "Request body too large",
-            })),
+        return ApiError::with_message(
+            ApiErrorCode::ValidationError,
+            "Request body too large.",
         )
-            .into_response();
+        .into_response();
     }
     res
 }

@@ -1,10 +1,15 @@
 use axum::{http::StatusCode, response::IntoResponse, Json};
-use permissions::{perms, Perms};
+use domain::api_error::{ApiError, ApiErrorCode};
+use permissions::{perms, Perms, Permission};
 use sqlx::{PgPool, Row};
 use uuid::Uuid;
 
-pub fn api_error(status: StatusCode, code: &'static str) -> axum::response::Response {
-    (status, Json(serde_json::json!({ "error": code }))).into_response()
+pub fn api_error(code: ApiErrorCode) -> axum::response::Response {
+    ApiError::new(code).into_response()
+}
+
+pub fn api_error_msg(code: ApiErrorCode, message: impl Into<String>) -> axum::response::Response {
+    ApiError::with_message(code, message).into_response()
 }
 
 pub fn is_unique_violation(err: &sqlx::Error) -> bool {
@@ -26,7 +31,7 @@ pub async fn is_member(pool: &PgPool, org_id: Uuid, user_id: Uuid) -> Result<boo
     .bind(user_id)
     .fetch_optional(pool)
     .await
-    .map_err(|_| api_error(StatusCode::INTERNAL_SERVER_ERROR, "db_error"))?
+    .map_err(|_| api_error(ApiErrorCode::InternalError))?
     .is_some();
 
     Ok(ok)
@@ -47,10 +52,10 @@ pub async fn member_perms(pool: &PgPool, org_id: Uuid, user_id: Uuid) -> Result<
     .bind(user_id)
     .fetch_optional(pool)
     .await
-    .map_err(|_| api_error(StatusCode::INTERNAL_SERVER_ERROR, "db_error"))?;
+    .map_err(|_| api_error(ApiErrorCode::InternalError))?;
 
     let Some(row) = row else {
-        return Err(api_error(StatusCode::FORBIDDEN, "not_a_member"));
+        return Err(api_error(ApiErrorCode::PermissionDenied));
     };
 
     let role: String = row.get("role");
@@ -62,3 +67,38 @@ pub async fn member_perms(pool: &PgPool, org_id: Uuid, user_id: Uuid) -> Result<
     Ok(permissions.unwrap_or(0))
 }
 
+pub async fn can(
+    pool: &PgPool,
+    user_id: Uuid,
+    organization_id: Uuid,
+    permission: Permission,
+) -> Result<bool, axum::response::Response> {
+    let perms = member_perms(pool, organization_id, user_id).await?;
+    Ok(permissions::has(perms, permission.bit()))
+}
+
+pub async fn can_access_channel(
+    pool: &PgPool,
+    user_id: Uuid,
+    channel_id: Uuid,
+) -> Result<bool, axum::response::Response> {
+    let row = sqlx::query(
+        r#"
+        select organization_id
+        from channels
+        where id = $1
+        "#,
+    )
+    .bind(channel_id)
+    .fetch_optional(pool)
+    .await
+    .map_err(|_| api_error(ApiErrorCode::InternalError))?;
+
+    let Some(row) = row else {
+        return Ok(false);
+    };
+
+    let org_id: Uuid = row.get("organization_id");
+    let perms = member_perms(pool, org_id, user_id).await?;
+    Ok(permissions::has(perms, perms::CHANNELS_VIEW))
+}

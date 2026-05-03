@@ -12,6 +12,8 @@ use time::OffsetDateTime;
 use uuid::Uuid;
 use validator::ValidateEmail;
 
+use domain::api_error::ApiErrorCode;
+use crate::util;
 pub fn router() -> Router<AppState> {
     Router::new()
         .route("/register", post(register))
@@ -55,22 +57,22 @@ pub struct MeResponse {
 
 async fn register(State(state): State<AppState>, Json(req): Json<RegisterRequest>) -> impl IntoResponse {
     if !req.email.validate_email() {
-        return api_error(StatusCode::BAD_REQUEST, "invalid_email");
+        return util::api_error(ApiErrorCode::ValidationError);
     }
     if req.password.len() < 8 {
-        return api_error(StatusCode::BAD_REQUEST, "password_too_short");
+        return util::api_error_msg(ApiErrorCode::ValidationError, "Password must be at least 8 characters.");
     }
 
     let email = req.email.trim().to_lowercase();
     let display_name = req.display_name.trim().to_string();
     if display_name.is_empty() {
-        return api_error(StatusCode::BAD_REQUEST, "invalid_display_name");
+        return util::api_error(ApiErrorCode::ValidationError);
     }
 
     let user_id = Uuid::now_v7();
     let password_hash = match auth::hash_password(&req.password) {
         Ok(h) => h,
-        Err(_) => return api_error(StatusCode::INTERNAL_SERVER_ERROR, "hash_failed"),
+        Err(_) => return util::api_error(ApiErrorCode::InternalError),
     };
 
     let inserted = sqlx::query(
@@ -90,15 +92,15 @@ async fn register(State(state): State<AppState>, Json(req): Json<RegisterRequest
         Ok(_) => {}
         Err(err) => {
             if is_unique_violation(&err) {
-                return api_error(StatusCode::CONFLICT, "email_taken");
+                return util::api_error(ApiErrorCode::Conflict);
             }
-            return api_error(StatusCode::INTERNAL_SERVER_ERROR, "db_error");
+            return util::api_error(ApiErrorCode::InternalError);
         }
     }
 
     match issue_tokens(&state.pool, &state.auth_cfg, user_id).await {
         Ok(tokens) => (StatusCode::OK, Json(tokens)).into_response(),
-        Err(_) => api_error(StatusCode::INTERNAL_SERVER_ERROR, "token_issue_failed"),
+        Err(_) => util::api_error(ApiErrorCode::InternalError),
     }
 }
 
@@ -117,23 +119,23 @@ async fn login(State(state): State<AppState>, Json(req): Json<LoginRequest>) -> 
 
     let Some((user_id, password_hash)) = (match row {
         Ok(r) => r,
-        Err(_) => return api_error(StatusCode::INTERNAL_SERVER_ERROR, "db_error"),
+        Err(_) => return util::api_error(ApiErrorCode::InternalError),
     }) else {
-        return api_error(StatusCode::UNAUTHORIZED, "invalid_credentials");
+        return util::api_error(ApiErrorCode::Unauthenticated);
     };
 
     let Some(password_hash) = password_hash else {
-        return api_error(StatusCode::UNAUTHORIZED, "invalid_credentials");
+        return util::api_error(ApiErrorCode::Unauthenticated);
     };
 
     let verified = auth::verify_password(&req.password, &password_hash).unwrap_or(false);
     if !verified {
-        return api_error(StatusCode::UNAUTHORIZED, "invalid_credentials");
+        return util::api_error(ApiErrorCode::Unauthenticated);
     }
 
     match issue_tokens(&state.pool, &state.auth_cfg, user_id).await {
         Ok(tokens) => (StatusCode::OK, Json(tokens)).into_response(),
-        Err(_) => api_error(StatusCode::INTERNAL_SERVER_ERROR, "token_issue_failed"),
+        Err(_) => util::api_error(ApiErrorCode::InternalError),
     }
 }
 
@@ -143,7 +145,7 @@ async fn refresh(State(state): State<AppState>, Json(req): Json<RefreshRequest>)
 
     let mut tx = match state.pool.begin().await {
         Ok(tx) => tx,
-        Err(_) => return api_error(StatusCode::INTERNAL_SERVER_ERROR, "db_error"),
+        Err(_) => return util::api_error(ApiErrorCode::InternalError),
     };
 
     let existing = sqlx::query(
@@ -155,9 +157,9 @@ async fn refresh(State(state): State<AppState>, Json(req): Json<RefreshRequest>)
 
     let Some(existing) = (match existing {
         Ok(r) => r,
-        Err(_) => return api_error(StatusCode::INTERNAL_SERVER_ERROR, "db_error"),
+        Err(_) => return util::api_error(ApiErrorCode::InternalError),
     }) else {
-        return api_error(StatusCode::UNAUTHORIZED, "invalid_refresh_token");
+        return util::api_error(ApiErrorCode::Unauthenticated);
     };
 
     let id: Uuid = existing.get("id");
@@ -166,7 +168,7 @@ async fn refresh(State(state): State<AppState>, Json(req): Json<RefreshRequest>)
     let revoked_at: Option<OffsetDateTime> = existing.get("revoked_at");
 
     if revoked_at.is_some() || expires_at <= now {
-        return api_error(StatusCode::UNAUTHORIZED, "invalid_refresh_token");
+        return util::api_error(ApiErrorCode::Unauthenticated);
     }
 
     let revoked = sqlx::query(
@@ -180,7 +182,7 @@ async fn refresh(State(state): State<AppState>, Json(req): Json<RefreshRequest>)
     .execute(&mut *tx)
     .await;
     if revoked.is_err() {
-        return api_error(StatusCode::INTERNAL_SERVER_ERROR, "db_error");
+        return util::api_error(ApiErrorCode::InternalError);
     }
 
     let (new_refresh_token, new_refresh_hash, new_expires_at) =
@@ -200,16 +202,16 @@ async fn refresh(State(state): State<AppState>, Json(req): Json<RefreshRequest>)
     .execute(&mut *tx)
     .await;
     if inserted.is_err() {
-        return api_error(StatusCode::INTERNAL_SERVER_ERROR, "db_error");
+        return util::api_error(ApiErrorCode::InternalError);
     }
 
     if tx.commit().await.is_err() {
-        return api_error(StatusCode::INTERNAL_SERVER_ERROR, "db_error");
+        return util::api_error(ApiErrorCode::InternalError);
     }
 
     let access_token = match auth::issue_access_token(&state.auth_cfg, user_id) {
         Ok(t) => t,
-        Err(_) => return api_error(StatusCode::INTERNAL_SERVER_ERROR, "token_issue_failed"),
+        Err(_) => return util::api_error(ApiErrorCode::InternalError),
     };
 
     (
@@ -237,13 +239,13 @@ async fn logout(State(state): State<AppState>, Json(req): Json<RefreshRequest>) 
 
     match res {
         Ok(_) => (StatusCode::OK, Json(serde_json::json!({"status":"ok"}))).into_response(),
-        Err(_) => api_error(StatusCode::INTERNAL_SERVER_ERROR, "db_error"),
+        Err(_) => util::api_error(ApiErrorCode::InternalError),
     }
 }
 
 async fn me(State(state): State<AppState>, auth: Option<axum::Extension<AuthContext>>) -> impl IntoResponse {
     let Some(axum::Extension(auth)) = auth else {
-        return api_error(StatusCode::UNAUTHORIZED, "unauthorized");
+        return util::api_error(ApiErrorCode::Unauthenticated);
     };
 
     let user = sqlx::query(
@@ -259,9 +261,9 @@ async fn me(State(state): State<AppState>, auth: Option<axum::Extension<AuthCont
 
     let Some(user) = (match user {
         Ok(u) => u,
-        Err(_) => return api_error(StatusCode::INTERNAL_SERVER_ERROR, "db_error"),
+        Err(_) => return util::api_error(ApiErrorCode::InternalError),
     }) else {
-        return api_error(StatusCode::UNAUTHORIZED, "unauthorized");
+        return util::api_error(ApiErrorCode::Unauthenticated);
     };
 
     (
@@ -314,8 +316,4 @@ fn is_unique_violation(err: &sqlx::Error) -> bool {
         sqlx::Error::Database(db_err) => db_err.code().as_deref() == Some("23505"),
         _ => false,
     }
-}
-
-fn api_error(status: StatusCode, code: &'static str) -> axum::response::Response {
-    (status, Json(serde_json::json!({ "error": code }))).into_response()
 }

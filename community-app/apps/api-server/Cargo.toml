@@ -12,7 +12,9 @@ base64.workspace = true
 config = { path = "../../crates/config" }
 db = { path = "../../crates/db" }
 dotenvy.workspace = true
+domain = { path = "../../crates/domain" }
 events = { path = "../../crates/events" }
+media = { path = "../../crates/media" }
 permissions = { path = "../../crates/permissions" }
 rand.workspace = true
 redis.workspace = true

@@ -15,6 +15,8 @@ use sqlx::Row;
 use time::{format_description::well_known::Rfc3339, OffsetDateTime};
 use tracing::error;
 use uuid::Uuid;
+use events::envelope::EventEnvelope;
+use domain::api_error::ApiErrorCode;
 
 pub fn router() -> Router<AppState> {
     Router::new()
@@ -73,18 +75,19 @@ async fn list_messages(
     Path(channel_id): Path<Uuid>,
     Query(query): Query<ListMessagesQuery>,
 ) -> impl IntoResponse {
-    let (org_id, _channel_kind) = match get_channel_org(&state.pool, channel_id).await {
+    // Reusable helper for channel access (membership + channels.view).
+    let can_access = match util::can_access_channel(&state.pool, auth.user_id, channel_id).await {
         Ok(v) => v,
         Err(e) => return e,
     };
+    if !can_access {
+        return util::api_error(ApiErrorCode::PermissionDenied);
+    }
 
-    let perms = match util::member_perms(&state.pool, org_id, auth.user_id).await {
-        Ok(p) => p,
+    let (_org_id, _channel_kind) = match get_channel_org(&state.pool, channel_id).await {
+        Ok(v) => v,
         Err(e) => return e,
     };
-    if !permissions::has(perms, perms::CHANNELS_VIEW) {
-        return util::api_error(StatusCode::FORBIDDEN, "forbidden");
-    }
 
     let limit = query.limit.unwrap_or(50).min(100) as i64;
     let before = query.before.as_deref();
@@ -130,7 +133,7 @@ async fn list_messages(
 
     let rows = match rows {
         Ok(r) => r,
-        Err(_) => return util::api_error(StatusCode::INTERNAL_SERVER_ERROR, "db_error"),
+        Err(_) => return util::api_error(ApiErrorCode::InternalError),
     };
 
     let mut messages: Vec<MessageResponse> = Vec::with_capacity(rows.len());
@@ -168,12 +171,12 @@ async fn send_message(
         let _: () = redis.expire(&rl_key, 10).await.unwrap_or(());
     }
     if current > 20 {
-        return util::api_error(StatusCode::TOO_MANY_REQUESTS, "rate_limited");
+        return util::api_error(ApiErrorCode::RateLimited);
     }
 
     let body = req.body.trim().to_string();
     if body.is_empty() {
-        return util::api_error(StatusCode::BAD_REQUEST, "invalid_body");
+        return util::api_error(ApiErrorCode::ValidationError);
     }
 
     let (org_id, _channel_kind) = match get_channel_org(&state.pool, channel_id).await {
@@ -182,12 +185,12 @@ async fn send_message(
     };
 
     // 2. validate membership + 3. permission check
-    let perms = match util::member_perms(&state.pool, org_id, auth.user_id).await {
-        Ok(p) => p,
+    let ok = match util::can(&state.pool, auth.user_id, org_id, permissions::Permission::MessagesSend).await {
+        Ok(v) => v,
         Err(e) => return e,
     };
-    if !permissions::has(perms, perms::MESSAGES_SEND) {
-        return util::api_error(StatusCode::FORBIDDEN, "forbidden");
+    if !ok {
+        return util::api_error(ApiErrorCode::PermissionDenied);
     }
 
     // 4. insert message in short transaction
@@ -196,7 +199,7 @@ async fn send_message(
 
     let mut tx = match state.pool.begin().await {
         Ok(tx) => tx,
-        Err(_) => return util::api_error(StatusCode::INTERNAL_SERVER_ERROR, "db_error"),
+        Err(_) => return util::api_error(ApiErrorCode::InternalError),
     };
 
     let inserted = sqlx::query(
@@ -215,28 +218,30 @@ async fn send_message(
     .await;
 
     if inserted.is_err() {
-        return util::api_error(StatusCode::INTERNAL_SERVER_ERROR, "db_error");
+        return util::api_error(ApiErrorCode::InternalError);
     }
 
     if tx.commit().await.is_err() {
-        return util::api_error(StatusCode::INTERNAL_SERVER_ERROR, "db_error");
+        return util::api_error(ApiErrorCode::InternalError);
     }
 
-    // 6. publish event to NATS after commit
-    let evt = serde_json::json!({
-        "type": "message.created",
-        "organization_id": org_id,
-        "channel_id": channel_id,
-        "message_id": message_id,
-        "sender_id": auth.user_id,
-        "body": body,
-        "created_at": now.format(&Rfc3339).unwrap_or_default(),
-    });
-    if let Err(err) = state
-        .nats
-        .publish("message.created", serde_json::to_vec(&evt).unwrap().into())
-        .await
-    {
+    // 6. publish event to NATS Core after commit
+    #[derive(serde::Serialize)]
+    struct MessageCreatedData {
+        channel_id: Uuid,
+        message_id: Uuid,
+    }
+    let env = EventEnvelope::new(
+        "message.created",
+        org_id,
+        Some(auth.user_id),
+        MessageCreatedData {
+            channel_id,
+            message_id,
+        },
+    );
+    let subject = events::subjects::message_created(org_id, channel_id);
+    if let Err(err) = events::core::publish(&state.nats, subject, &env).await {
         error!(error = %err, "failed to publish message.created");
     }
 
@@ -264,7 +269,7 @@ async fn edit_message(
     Json(req): Json<EditMessageRequest>,
 ) -> impl IntoResponse {
     let Some(body) = req.body.map(|b| b.trim().to_string()) else {
-        return util::api_error(StatusCode::BAD_REQUEST, "invalid_request");
+        return util::api_error(ApiErrorCode::ValidationError);
     };
 
     let row = sqlx::query(
@@ -280,9 +285,9 @@ async fn edit_message(
 
     let Some(row) = (match row {
         Ok(r) => r,
-        Err(_) => return util::api_error(StatusCode::INTERNAL_SERVER_ERROR, "db_error"),
+        Err(_) => return util::api_error(ApiErrorCode::InternalError),
     }) else {
-        return util::api_error(StatusCode::NOT_FOUND, "not_found");
+        return util::api_error(ApiErrorCode::NotFound);
     };
 
     let org_id: Uuid = row.get("organization_id");
@@ -292,8 +297,11 @@ async fn edit_message(
         Ok(p) => p,
         Err(e) => return e,
     };
-    if sender_id != auth.user_id && !permissions::has(perms, perms::MESSAGES_MANAGE) {
-        return util::api_error(StatusCode::FORBIDDEN, "forbidden");
+    if sender_id != auth.user_id {
+        return util::api_error(ApiErrorCode::PermissionDenied);
+    }
+    if !permissions::has(perms, perms::MESSAGES_EDIT_OWN) {
+        return util::api_error(ApiErrorCode::PermissionDenied);
     }
 
     let updated = sqlx::query(
@@ -310,7 +318,7 @@ async fn edit_message(
 
     match updated {
         Ok(_) => (StatusCode::OK, Json(serde_json::json!({"status":"ok"}))).into_response(),
-        Err(_) => util::api_error(StatusCode::INTERNAL_SERVER_ERROR, "db_error"),
+        Err(_) => util::api_error(ApiErrorCode::InternalError),
     }
 }
 
@@ -332,9 +340,9 @@ async fn delete_message(
 
     let Some(row) = (match row {
         Ok(r) => r,
-        Err(_) => return util::api_error(StatusCode::INTERNAL_SERVER_ERROR, "db_error"),
+        Err(_) => return util::api_error(ApiErrorCode::InternalError),
     }) else {
-        return util::api_error(StatusCode::NOT_FOUND, "not_found");
+        return util::api_error(ApiErrorCode::NotFound);
     };
 
     let org_id: Uuid = row.get("organization_id");
@@ -344,8 +352,12 @@ async fn delete_message(
         Ok(p) => p,
         Err(e) => return e,
     };
-    if sender_id != auth.user_id && !permissions::has(perms, perms::MESSAGES_MANAGE) {
-        return util::api_error(StatusCode::FORBIDDEN, "forbidden");
+    if sender_id == auth.user_id {
+        if !permissions::has(perms, perms::MESSAGES_DELETE_OWN) {
+            return util::api_error(ApiErrorCode::PermissionDenied);
+        }
+    } else if !permissions::has(perms, perms::MESSAGES_DELETE_ANY) {
+        return util::api_error(ApiErrorCode::PermissionDenied);
     }
 
     let deleted = sqlx::query(
@@ -361,7 +373,7 @@ async fn delete_message(
 
     match deleted {
         Ok(_) => (StatusCode::OK, Json(serde_json::json!({"status":"ok"}))).into_response(),
-        Err(_) => util::api_error(StatusCode::INTERNAL_SERVER_ERROR, "db_error"),
+        Err(_) => util::api_error(ApiErrorCode::InternalError),
     }
 }
 
@@ -373,7 +385,7 @@ async fn add_reaction(
 ) -> impl IntoResponse {
     let emoji = req.emoji.trim().to_string();
     if emoji.is_empty() {
-        return util::api_error(StatusCode::BAD_REQUEST, "invalid_emoji");
+        return util::api_error(ApiErrorCode::ValidationError);
     }
 
     let org_id = match get_message_org(&state.pool, message_id).await {
@@ -385,8 +397,8 @@ async fn add_reaction(
         Ok(p) => p,
         Err(e) => return e,
     };
-    if !permissions::has(perms, perms::CHANNELS_VIEW) {
-        return util::api_error(StatusCode::FORBIDDEN, "forbidden");
+    if !permissions::has(perms, perms::MESSAGES_REACT) {
+        return util::api_error(ApiErrorCode::PermissionDenied);
     }
 
     let inserted = sqlx::query(
@@ -405,7 +417,7 @@ async fn add_reaction(
 
     match inserted {
         Ok(_) => (StatusCode::OK, Json(serde_json::json!({"status":"ok"}))).into_response(),
-        Err(_) => util::api_error(StatusCode::INTERNAL_SERVER_ERROR, "db_error"),
+        Err(_) => util::api_error(ApiErrorCode::InternalError),
     }
 }
 
@@ -416,7 +428,7 @@ async fn remove_reaction(
 ) -> impl IntoResponse {
     let emoji = emoji.trim().to_string();
     if emoji.is_empty() {
-        return util::api_error(StatusCode::BAD_REQUEST, "invalid_emoji");
+        return util::api_error(ApiErrorCode::ValidationError);
     }
 
     let org_id = match get_message_org(&state.pool, message_id).await {
@@ -428,8 +440,8 @@ async fn remove_reaction(
         Ok(p) => p,
         Err(e) => return e,
     };
-    if !permissions::has(perms, perms::CHANNELS_VIEW) {
-        return util::api_error(StatusCode::FORBIDDEN, "forbidden");
+    if !permissions::has(perms, perms::MESSAGES_REACT) {
+        return util::api_error(ApiErrorCode::PermissionDenied);
     }
 
     let deleted = sqlx::query(
@@ -446,7 +458,7 @@ async fn remove_reaction(
 
     match deleted {
         Ok(_) => (StatusCode::OK, Json(serde_json::json!({"status":"ok"}))).into_response(),
-        Err(_) => util::api_error(StatusCode::INTERNAL_SERVER_ERROR, "db_error"),
+        Err(_) => util::api_error(ApiErrorCode::InternalError),
     }
 }
 
@@ -461,10 +473,10 @@ async fn get_channel_org(pool: &PgPool, channel_id: Uuid) -> Result<(Uuid, Strin
     .bind(channel_id)
     .fetch_optional(pool)
     .await
-    .map_err(|_| util::api_error(StatusCode::INTERNAL_SERVER_ERROR, "db_error"))?;
+    .map_err(|_| util::api_error(ApiErrorCode::InternalError))?;
 
     let Some(row) = row else {
-        return Err(util::api_error(StatusCode::NOT_FOUND, "channel_not_found"));
+        return Err(util::api_error(ApiErrorCode::NotFound));
     };
 
     Ok((row.get("organization_id"), row.get("kind")))
@@ -481,10 +493,10 @@ async fn get_message_org(pool: &PgPool, message_id: Uuid) -> Result<Uuid, axum::
     .bind(message_id)
     .fetch_optional(pool)
     .await
-    .map_err(|_| util::api_error(StatusCode::INTERNAL_SERVER_ERROR, "db_error"))?;
+    .map_err(|_| util::api_error(ApiErrorCode::InternalError))?;
 
     let Some(row) = row else {
-        return Err(util::api_error(StatusCode::NOT_FOUND, "not_found"));
+        return Err(util::api_error(ApiErrorCode::NotFound));
     };
     Ok(row.get("organization_id"))
 }
@@ -509,10 +521,10 @@ async fn parse_before(
         .bind(channel_id)
         .fetch_optional(pool)
         .await
-        .map_err(|_| util::api_error(StatusCode::INTERNAL_SERVER_ERROR, "db_error"))?;
+        .map_err(|_| util::api_error(ApiErrorCode::InternalError))?;
 
         let Some(row) = row else {
-            return Err(util::api_error(StatusCode::BAD_REQUEST, "invalid_before"));
+            return Err(util::api_error(ApiErrorCode::ValidationError));
         };
         let created_at: OffsetDateTime = row.get("created_at");
         let id: Uuid = row.get("id");
@@ -520,7 +532,7 @@ async fn parse_before(
     }
 
     let created_at = OffsetDateTime::parse(before, &Rfc3339)
-        .map_err(|_| util::api_error(StatusCode::BAD_REQUEST, "invalid_before"))?;
+        .map_err(|_| util::api_error(ApiErrorCode::ValidationError))?;
     Ok(Some((created_at, Uuid::max())))
 }
 
