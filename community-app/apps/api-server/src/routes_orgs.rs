@@ -16,7 +16,8 @@ use time::OffsetDateTime;
 use uuid::Uuid;
 
 use crate::util;
-use domain::api_error::ApiErrorCode;
+use api::ApiErrorCode;
+use tracing::Span;
 
 pub fn router() -> Router<AppState> {
     Router::new()
@@ -296,6 +297,7 @@ async fn get_org(
     Extension(auth): Extension<AuthContext>,
     Path(org_id): Path<Uuid>,
 ) -> impl IntoResponse {
+    Span::current().record("organization_id", tracing::field::display(org_id));
     if !util::is_member(&state.pool, org_id, auth.user_id)
         .await
         .unwrap_or(false)
@@ -338,6 +340,7 @@ async fn list_members(
     Extension(auth): Extension<AuthContext>,
     Path(org_id): Path<Uuid>,
 ) -> impl IntoResponse {
+    Span::current().record("organization_id", tracing::field::display(org_id));
     if !util::is_member(&state.pool, org_id, auth.user_id)
         .await
         .unwrap_or(false)
@@ -380,6 +383,7 @@ async fn create_invite(
     Path(org_id): Path<Uuid>,
     Json(req): Json<CreateInviteRequest>,
 ) -> impl IntoResponse {
+    Span::current().record("organization_id", tracing::field::display(org_id));
     let perms = match util::member_perms(&state.pool, org_id, auth.user_id).await {
         Ok(p) => p,
         Err(e) => return e,
@@ -435,6 +439,7 @@ async fn add_member(
     Path(org_id): Path<Uuid>,
     Json(req): Json<AddMemberRequest>,
 ) -> impl IntoResponse {
+    Span::current().record("organization_id", tracing::field::display(org_id));
     // Two modes:
     // - Owner adds a specific user_id (admin action)
     // - A user joins via invite_code (self-serve)

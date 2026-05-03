@@ -6,10 +6,11 @@ use axum::{
     routing::get,
     Extension, Router,
 };
-use domain::api_error::ApiErrorCode;
+use api::ApiErrorCode;
 use serde::{Deserialize, Serialize};
 use sqlx::Row;
 use time::OffsetDateTime;
+use tracing::Span;
 use uuid::Uuid;
 
 pub fn router() -> Router<AppState> {
@@ -109,6 +110,7 @@ async fn get_org_branding(
     Extension(auth): Extension<AuthContext>,
     Path(org_id): Path<Uuid>,
 ) -> impl IntoResponse {
+    Span::current().record("organization_id", tracing::field::display(org_id));
     // Must be org member to read.
     let _perms = match util::member_perms(&state.pool, org_id, auth.user_id).await {
         Ok(p) => p,
@@ -166,6 +168,7 @@ async fn patch_org_branding(
     Path(org_id): Path<Uuid>,
     Json(req): Json<PatchBrandingRequest>,
 ) -> impl IntoResponse {
+    Span::current().record("organization_id", tracing::field::display(org_id));
     let ok = match util::can(&state.pool, auth.user_id, org_id, permissions::Permission::BrandingManage).await {
         Ok(v) => v,
         Err(e) => return e,

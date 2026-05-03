@@ -4,6 +4,7 @@ members = [
   "apps/api-server",
   "apps/realtime-gateway",
   "apps/worker",
+  "crates/api",
   "crates/auth",
   "crates/branding",
   "crates/chat",

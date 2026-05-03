@@ -2,8 +2,6 @@ use serde::{Deserialize, Serialize};
 use time::OffsetDateTime;
 use uuid::Uuid;
 
-pub mod api_error;
-
 // ---- Organizations / membership ----
 
 #[derive(Debug, Clone, Serialize, Deserialize)]

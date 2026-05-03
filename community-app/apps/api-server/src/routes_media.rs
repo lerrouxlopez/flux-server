@@ -7,8 +7,9 @@ use axum::{
     Extension, Router,
 };
 use permissions::perms;
-use domain::api_error::ApiErrorCode;
+use api::ApiErrorCode;
 use serde::{Deserialize, Serialize};
+use tracing::Span;
 use uuid::Uuid;
 
 pub fn router() -> Router<AppState> {
@@ -44,6 +45,7 @@ async fn create_media_room(
     Path(org_id): Path<Uuid>,
     Json(req): Json<CreateMediaRoomRequest>,
 ) -> impl IntoResponse {
+    Span::current().record("organization_id", tracing::field::display(org_id));
     let perms = match util::member_perms(&state.pool, org_id, auth.user_id).await {
         Ok(p) => p,
         Err(e) => return e,
@@ -114,6 +116,7 @@ async fn get_media_room(
         Ok(p) => p,
         Err(e) => return e,
     };
+    Span::current().record("organization_id", tracing::field::display(room.organization_id));
 
     (
         StatusCode::OK,
@@ -160,6 +163,7 @@ async fn issue_token(
         Ok(p) => p,
         Err(e) => return e,
     };
+    Span::current().record("organization_id", tracing::field::display(room.organization_id));
 
     let token_req = media::TokenRequest {
         can_publish: req.can_publish,
@@ -205,6 +209,7 @@ async fn list_participants(
         Ok(p) => p,
         Err(e) => return e,
     };
+    Span::current().record("organization_id", tracing::field::display(room.organization_id));
     if !permissions::has(perms, perms::VOICE_JOIN) {
         return util::api_error(ApiErrorCode::PermissionDenied);
     }

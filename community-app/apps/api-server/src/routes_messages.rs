@@ -16,7 +16,8 @@ use time::{format_description::well_known::Rfc3339, OffsetDateTime};
 use tracing::error;
 use uuid::Uuid;
 use events::envelope::EventEnvelope;
-use domain::api_error::ApiErrorCode;
+use api::ApiErrorCode;
+use tracing::Span;
 
 pub fn router() -> Router<AppState> {
     Router::new()
@@ -84,10 +85,11 @@ async fn list_messages(
         return util::api_error(ApiErrorCode::PermissionDenied);
     }
 
-    let (_org_id, _channel_kind) = match get_channel_org(&state.pool, channel_id).await {
+    let (org_id, _channel_kind) = match get_channel_org(&state.pool, channel_id).await {
         Ok(v) => v,
         Err(e) => return e,
     };
+    Span::current().record("organization_id", tracing::field::display(org_id));
 
     let limit = query.limit.unwrap_or(50).min(100) as i64;
     let before = query.before.as_deref();
@@ -178,11 +180,15 @@ async fn send_message(
     if body.is_empty() {
         return util::api_error(ApiErrorCode::ValidationError);
     }
+    if body.len() > 2000 {
+        return util::api_error(ApiErrorCode::ValidationError);
+    }
 
     let (org_id, _channel_kind) = match get_channel_org(&state.pool, channel_id).await {
         Ok(v) => v,
         Err(e) => return e,
     };
+    Span::current().record("organization_id", tracing::field::display(org_id));
 
     // 2. validate membership + 3. permission check
     let ok = match util::can(&state.pool, auth.user_id, org_id, permissions::Permission::MessagesSend).await {
@@ -196,6 +202,7 @@ async fn send_message(
     // 4. insert message in short transaction
     let now = OffsetDateTime::now_utc();
     let message_id = Uuid::now_v7();
+    tracing::info!(organization_id=%org_id, channel_id=%channel_id, message_id=%message_id, "creating message");
 
     let mut tx = match state.pool.begin().await {
         Ok(tx) => tx,

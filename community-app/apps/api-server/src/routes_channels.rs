@@ -6,11 +6,12 @@ use axum::{
     routing::get,
     Extension, Router,
 };
-use domain::api_error::ApiErrorCode;
+use api::ApiErrorCode;
 use permissions::perms;
 use serde::{Deserialize, Serialize};
 use sqlx::Row;
 use time::OffsetDateTime;
+use tracing::Span;
 use uuid::Uuid;
 
 pub fn router() -> Router<AppState> {
@@ -53,6 +54,7 @@ async fn list_org_channels(
     Extension(auth): Extension<AuthContext>,
     Path(org_id): Path<Uuid>,
 ) -> impl IntoResponse {
+    Span::current().record("organization_id", tracing::field::display(org_id));
     let perms = match util::member_perms(&state.pool, org_id, auth.user_id).await {
         Ok(p) => p,
         Err(e) => return e,
@@ -98,6 +100,7 @@ async fn create_channel(
     Path(org_id): Path<Uuid>,
     Json(req): Json<CreateChannelRequest>,
 ) -> impl IntoResponse {
+    Span::current().record("organization_id", tracing::field::display(org_id));
     let ok = match util::can(&state.pool, auth.user_id, org_id, permissions::Permission::ChannelsCreate).await {
         Ok(v) => v,
         Err(e) => return e,
@@ -172,6 +175,7 @@ async fn get_channel(
     };
 
     let org_id: Uuid = row.get("organization_id");
+    Span::current().record("organization_id", tracing::field::display(org_id));
     let perms = match util::member_perms(&state.pool, org_id, auth.user_id).await {
         Ok(p) => p,
         Err(e) => return e,
@@ -218,6 +222,7 @@ async fn update_channel(
     };
 
     let org_id: Uuid = row.get("organization_id");
+    Span::current().record("organization_id", tracing::field::display(org_id));
     let perms = match util::member_perms(&state.pool, org_id, auth.user_id).await {
         Ok(p) => p,
         Err(e) => return e,
@@ -280,6 +285,7 @@ async fn delete_channel(
     };
 
     let org_id: Uuid = row.get("organization_id");
+    Span::current().record("organization_id", tracing::field::display(org_id));
     let perms = match util::member_perms(&state.pool, org_id, auth.user_id).await {
         Ok(p) => p,
         Err(e) => return e,

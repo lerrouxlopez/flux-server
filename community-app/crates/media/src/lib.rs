@@ -153,6 +153,7 @@ pub fn issue_livekit_token(
     room_name: String,
     req: &TokenRequest,
 ) -> anyhow::Result<TokenResponse> {
+    let _span = tracing::info_span!("livekit.token.generate", room_name=%room_name).entered();
     let grants = VideoGrants {
         room_join: true,
         room: room_name,

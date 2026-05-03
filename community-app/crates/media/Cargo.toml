@@ -17,3 +17,4 @@ serde_json.workspace = true
 sqlx.workspace = true
 time.workspace = true
 uuid.workspace = true
+tracing.workspace = true

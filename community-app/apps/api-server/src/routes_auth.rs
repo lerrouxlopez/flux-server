@@ -12,8 +12,9 @@ use time::OffsetDateTime;
 use uuid::Uuid;
 use validator::ValidateEmail;
 
-use domain::api_error::ApiErrorCode;
+use api::ApiErrorCode;
 use crate::util;
+use redis::AsyncCommands;
 pub fn router() -> Router<AppState> {
     Router::new()
         .route("/register", post(register))
@@ -105,7 +106,19 @@ async fn register(State(state): State<AppState>, Json(req): Json<RegisterRequest
 }
 
 async fn login(State(state): State<AppState>, Json(req): Json<LoginRequest>) -> impl IntoResponse {
-    let email = req.email.trim().to_lowercase();
+    // Simple Redis-backed rate limit (do not log credentials).
+    let email_norm = req.email.trim().to_lowercase();
+    let mut redis = state.redis.clone();
+    let rl_key = format!("rate:login:{email_norm}");
+    let current: i64 = redis.incr(&rl_key, 1).await.unwrap_or(1);
+    if current == 1 {
+        let _: () = redis.expire(&rl_key, 60).await.unwrap_or(());
+    }
+    if current > 10 {
+        return util::api_error(ApiErrorCode::RateLimited);
+    }
+
+    let email = email_norm;
     let row = sqlx::query_as::<_, (Uuid, Option<String>)>(
         r#"
         select id, password_hash

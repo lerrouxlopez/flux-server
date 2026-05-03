@@ -1,0 +1,10 @@
+[package]
+name = "api"
+edition.workspace = true
+license.workspace = true
+version.workspace = true
+
+[dependencies]
+axum.workspace = true
+serde.workspace = true
+

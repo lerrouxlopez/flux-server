@@ -1,16 +1,16 @@
 use axum::{
     extract::{Query, State, WebSocketUpgrade},
-    http::{HeaderMap, StatusCode},
+    http::HeaderMap,
     response::IntoResponse,
     routing::get,
-    Json, Router,
+    Router,
 };
 use sqlx::PgPool;
 use std::{net::SocketAddr, sync::Arc};
 use tower_http::trace::TraceLayer;
 use tracing::{info, warn};
 use uuid::Uuid;
-use domain::api_error::{ApiError, ApiErrorCode};
+use api::{ApiError, ApiErrorCode};
 
 mod protocol;
 mod runtime;

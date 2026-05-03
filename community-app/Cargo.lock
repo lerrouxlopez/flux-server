@@ -54,10 +54,19 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "7f202df86484c868dbad7eaa557ef785d5c66295e41b460ef922eca0723b842c"
 
 [[package]]
+name = "api"
+version = "0.1.0"
+dependencies = [
+ "axum",
+ "serde",
+]
+
+[[package]]
 name = "api-server"
 version = "0.1.0"
 dependencies = [
  "anyhow",
+ "api",
  "async-nats",
  "auth",
  "axum",
@@ -1792,6 +1801,7 @@ dependencies = [
  "serde_json",
  "sqlx",
  "time",
+ "tracing",
  "uuid",
 ]
 
@@ -2691,6 +2701,7 @@ name = "realtime-gateway"
 version = "0.1.0"
 dependencies = [
  "anyhow",
+ "api",
  "async-nats",
  "auth",
  "axum",

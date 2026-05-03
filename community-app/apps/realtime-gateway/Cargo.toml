@@ -11,7 +11,7 @@ axum.workspace = true
 auth = { path = "../../crates/auth" }
 config = { path = "../../crates/config" }
 db = { path = "../../crates/db" }
-domain = { path = "../../crates/domain" }
+api = { path = "../../crates/api" }
 dotenvy.workspace = true
 events = { path = "../../crates/events" }
 futures-util.workspace = true
