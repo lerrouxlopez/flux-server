@@ -10,8 +10,9 @@ use tokio::sync::mpsc;
 use tracing::{debug, info, warn};
 use uuid::Uuid;
 
-const PRESENCE_TTL_SECS: u64 = 60;
+const PRESENCE_TTL_SECS: u64 = 90;
 const PRESENCE_REFRESH_SECS: u64 = 30;
+const TYPING_TTL_SECS: u64 = 5;
 
 #[derive(Clone)]
 pub struct Runtime {
@@ -266,7 +267,7 @@ async fn handle_client_event(
     hub: &Hub,
     conn_id: Uuid,
     pool: &PgPool,
-    _redis: &mut redis::aio::ConnectionManager,
+    redis: &mut redis::aio::ConnectionManager,
     nats: &async_nats::Client,
     user_id: Uuid,
     org_ids: &[Uuid],
@@ -281,6 +282,12 @@ async fn handle_client_event(
                 .or_insert_with(DashSet::new)
                 .insert(conn_id);
 
+            let typing_key = format!("typing:{channel_id}:{user_id}");
+            let _: () = redis
+                .set_ex(typing_key, "1", TYPING_TTL_SECS)
+                .await
+                .unwrap_or(());
+
             let evt = ServerEvent::TypingStarted { channel_id, user_id };
             let payload = serde_json::to_vec(&evt)?;
             let subject = format!("channel.{channel_id}.typing.started");
@@ -288,8 +295,9 @@ async fn handle_client_event(
 
             // Local broadcast for this node.
             hub.broadcast_to_channel(channel_id, &evt);
-            // Also publish org-scoped presence-ish channel activity if desired later.
-            let _ = org_id;
+            // Best available "channel members" fanout (we don't have per-channel membership tables yet):
+            // broadcast to all org member connections too.
+            hub.broadcast_to_org(org_id, &evt);
             Ok(())
         }
         ClientEvent::TypingStop { channel_id } => {
@@ -299,6 +307,8 @@ async fn handle_client_event(
             if let Some(set) = hub.channel_index.get(&channel_id) {
                 set.remove(&conn_id);
             }
+            let typing_key = format!("typing:{channel_id}:{user_id}");
+            let _: () = redis.del(typing_key).await.unwrap_or(());
             Ok(())
         }
     }
@@ -340,21 +350,32 @@ async fn presence_set_online(
     user_id: Uuid,
     org_ids: &[Uuid],
 ) -> anyhow::Result<()> {
-    for org_id in org_ids.iter().copied() {
-        let key = format!("presence:{org_id}:{user_id}");
-        let _: () = redis
-            .set_ex(key, "online", PRESENCE_TTL_SECS)
-            .await
-            .unwrap_or(());
+    // Track websocket connection count so multiple tabs/nodes don't flap presence.
+    let ws_key = format!("ws:user:{user_id}");
+    let count: i64 = redis.incr(&ws_key, 1).await.unwrap_or(1);
+    let _: () = redis
+        .expire(&ws_key, PRESENCE_TTL_SECS as i64)
+        .await
+        .unwrap_or(());
 
-        let evt = ServerEvent::PresenceChanged {
-            organization_id: org_id,
-            user_id,
-            status: "online".to_string(),
-        };
-        let payload = serde_json::to_vec(&evt)?;
-        let subject = format!("org.{org_id}.presence.changed");
-        let _ = nats.publish(subject, payload.into()).await;
+    let presence_key = format!("presence:user:{user_id}");
+    let was_offline = count == 1;
+    let _: () = redis
+        .set_ex(&presence_key, "online", PRESENCE_TTL_SECS)
+        .await
+        .unwrap_or(());
+
+    if was_offline {
+        for org_id in org_ids.iter().copied() {
+            let evt = ServerEvent::PresenceChanged {
+                organization_id: org_id,
+                user_id,
+                status: "online".to_string(),
+            };
+            let payload = serde_json::to_vec(&evt)?;
+            let subject = format!("org.{org_id}.presence.changed");
+            let _ = nats.publish(subject, payload.into()).await;
+        }
     }
     Ok(())
 }
@@ -364,13 +385,20 @@ async fn presence_refresh(
     user_id: Uuid,
     org_ids: &[Uuid],
 ) -> anyhow::Result<()> {
-    for org_id in org_ids.iter().copied() {
-        let key = format!("presence:{org_id}:{user_id}");
-        let _: () = redis
-            .expire(key, PRESENCE_TTL_SECS as i64)
-            .await
-            .unwrap_or(());
-    }
+    let ws_key = format!("ws:user:{user_id}");
+    let presence_key = format!("presence:user:{user_id}");
+
+    let _: () = redis
+        .expire(&ws_key, PRESENCE_TTL_SECS as i64)
+        .await
+        .unwrap_or(());
+    let _: () = redis
+        .expire(&presence_key, PRESENCE_TTL_SECS as i64)
+        .await
+        .unwrap_or(());
+
+    // org_ids is unused for refresh right now; keep signature stable.
+    let _ = org_ids;
     Ok(())
 }
 
@@ -380,18 +408,33 @@ async fn presence_set_offline(
     user_id: Uuid,
     org_ids: &[Uuid],
 ) -> anyhow::Result<()> {
-    for org_id in org_ids.iter().copied() {
-        let key = format!("presence:{org_id}:{user_id}");
-        let _: () = redis.del(key).await.unwrap_or(());
+    let ws_key = format!("ws:user:{user_id}");
+    let presence_key = format!("presence:user:{user_id}");
 
-        let evt = ServerEvent::PresenceChanged {
-            organization_id: org_id,
-            user_id,
-            status: "offline".to_string(),
-        };
-        let payload = serde_json::to_vec(&evt)?;
-        let subject = format!("org.{org_id}.presence.changed");
-        let _ = nats.publish(subject, payload.into()).await;
+    let count: i64 = redis.decr(&ws_key, 1).await.unwrap_or(0);
+    if count <= 0 {
+        let _: () = redis.del(&ws_key).await.unwrap_or(());
+        let _: () = redis.del(&presence_key).await.unwrap_or(());
+
+        for org_id in org_ids.iter().copied() {
+            let evt = ServerEvent::PresenceChanged {
+                organization_id: org_id,
+                user_id,
+                status: "offline".to_string(),
+            };
+            let payload = serde_json::to_vec(&evt)?;
+            let subject = format!("org.{org_id}.presence.changed");
+            let _ = nats.publish(subject, payload.into()).await;
+        }
+    } else {
+        let _: () = redis
+            .expire(&ws_key, PRESENCE_TTL_SECS as i64)
+            .await
+            .unwrap_or(());
+        let _: () = redis
+            .expire(&presence_key, PRESENCE_TTL_SECS as i64)
+            .await
+            .unwrap_or(());
     }
     Ok(())
 }

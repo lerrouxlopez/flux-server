@@ -8,6 +8,7 @@ use axum::{
 };
 use permissions::perms;
 use base64::Engine;
+use redis::AsyncCommands;
 use sqlx::PgPool;
 use serde::{Deserialize, Serialize};
 use sqlx::Row;
@@ -158,6 +159,18 @@ async fn send_message(
     Path(channel_id): Path<Uuid>,
     Json(req): Json<SendMessageRequest>,
 ) -> impl IntoResponse {
+    // Simple Redis-backed rate limiting (per user per channel).
+    // Key scheme: rate:{user_id}:{action} where action encodes channel_id.
+    let mut redis = state.redis.clone();
+    let rl_key = format!("rate:{}:message.send:{}", auth.user_id, channel_id);
+    let current: i64 = redis.incr(&rl_key, 1).await.unwrap_or(1);
+    if current == 1 {
+        let _: () = redis.expire(&rl_key, 10).await.unwrap_or(());
+    }
+    if current > 20 {
+        return util::api_error(StatusCode::TOO_MANY_REQUESTS, "rate_limited");
+    }
+
     let body = req.body.trim().to_string();
     if body.is_empty() {
         return util::api_error(StatusCode::BAD_REQUEST, "invalid_body");
