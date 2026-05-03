@@ -6,11 +6,24 @@ version.workspace = true
 
 [dependencies]
 anyhow.workspace = true
+async-nats.workspace = true
 axum.workspace = true
+auth = { path = "../../crates/auth" }
 config = { path = "../../crates/config" }
+db = { path = "../../crates/db" }
 dotenvy.workspace = true
+events = { path = "../../crates/events" }
+futures-util.workspace = true
+redis.workspace = true
 realtime = { path = "../../crates/realtime" }
+serde.workspace = true
+serde_json.workspace = true
+sqlx.workspace = true
 telemetry = { path = "../../crates/telemetry" }
+time.workspace = true
 tokio.workspace = true
 tower-http.workspace = true
 tracing.workspace = true
+uuid.workspace = true
+dashmap = "6"
+bytes = "1"
