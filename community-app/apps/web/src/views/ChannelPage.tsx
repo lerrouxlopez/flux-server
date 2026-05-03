@@ -1,8 +1,8 @@
 import { useEffect, useMemo, useRef, useState } from "react";
-import { useParams, Link } from "react-router-dom";
+import { useParams, Link, useNavigate } from "react-router-dom";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { apiFetch } from "../api/client";
-import type { OrgsListResponse, ChannelsResponse, ListMessagesResponse, Message } from "../api/types";
+import type { OrgsListResponse, ChannelsResponse, ListMessagesResponse, Message, MediaRoom } from "../api/types";
 import { createRealtimeClient } from "../realtime/ws";
 import { Input } from "../components/Input";
 import { Button } from "../components/Button";
@@ -11,6 +11,7 @@ type SendMessageResponse = Message;
 
 export function ChannelPage() {
   const { org_slug, channel_id } = useParams();
+  const nav = useNavigate();
   const qc = useQueryClient();
   const [text, setText] = useState("");
   const [connected, setConnected] = useState(false);
@@ -46,6 +47,7 @@ export function ChannelPage() {
         if (e?.type === "message.created" && e.channel_id === channel_id) {
           qc.invalidateQueries({ queryKey: ["messages", channel_id] });
         }
+        // typing.stopped is server-driven; we can clear UI indicators here later.
       },
     });
   }, [channel_id, qc]);
@@ -54,6 +56,14 @@ export function ChannelPage() {
     rt.start();
     return () => rt.stop();
   }, [rt]);
+
+  useEffect(() => {
+    if (!channel_id) return;
+    rt.send({ type: "channel.subscribe", channel_id });
+    return () => {
+      rt.send({ type: "channel.unsubscribe", channel_id });
+    };
+  }, [channel_id, rt]);
 
   const send = useMutation({
     mutationFn: async (body: string) =>
@@ -84,6 +94,22 @@ export function ChannelPage() {
     },
     onSettled: () => {
       qc.invalidateQueries({ queryKey: ["messages", channel_id] });
+    },
+  });
+
+  const createMeeting = useMutation({
+    mutationFn: async () => {
+      return apiFetch<MediaRoom>(`/orgs/${org!.id}/media/rooms`, {
+        method: "POST",
+        body: JSON.stringify({
+          kind: "meeting",
+          channel_id: channel_id,
+          name: `Meeting - ${channel?.name ?? "channel"}`,
+        }),
+      });
+    },
+    onSuccess: (room) => {
+      nav(`/app/${org!.slug}/voice/${room.id}`);
     },
   });
 
@@ -131,6 +157,16 @@ export function ChannelPage() {
           <div className="text-lg font-semibold"># {channel.name}</div>
           <div className="text-xs text-slate-400">{connected ? "realtime online" : "realtime offline"}</div>
         </div>
+        <div className="mt-3 flex gap-2">
+          <Button
+            className="bg-emerald-600 hover:bg-emerald-500"
+            disabled={createMeeting.isPending}
+            onClick={() => createMeeting.mutate()}
+            type="button"
+          >
+            {createMeeting.isPending ? "Creating…" : "Start meeting"}
+          </Button>
+        </div>
 
         <div className="mt-4 h-[60vh] overflow-auto rounded-lg border border-slate-800 bg-slate-950/30 p-3">
           <div className="space-y-3">
@@ -151,4 +187,3 @@ export function ChannelPage() {
     </div>
   );
 }
-

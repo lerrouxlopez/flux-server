@@ -1,4 +1,5 @@
 use crate::{util, AppState, AuthContext};
+use api::ApiErrorCode;
 use axum::{
     extract::{Json, Path, Query, State},
     http::StatusCode,
@@ -6,23 +7,28 @@ use axum::{
     routing::{delete, get, patch, post},
     Extension, Router,
 };
-use permissions::perms;
 use base64::Engine;
+use events::envelope::EventEnvelope;
+use permissions::perms;
 use redis::AsyncCommands;
-use sqlx::PgPool;
 use serde::{Deserialize, Serialize};
+use sqlx::PgPool;
 use sqlx::Row;
 use time::{format_description::well_known::Rfc3339, OffsetDateTime};
 use tracing::error;
-use uuid::Uuid;
-use events::envelope::EventEnvelope;
-use api::ApiErrorCode;
 use tracing::Span;
+use uuid::Uuid;
 
 pub fn router() -> Router<AppState> {
     Router::new()
-        .route("/channels/{channel_id}/messages", get(list_messages).post(send_message))
-        .route("/messages/{message_id}", patch(edit_message).delete(delete_message))
+        .route(
+            "/channels/{channel_id}/messages",
+            get(list_messages).post(send_message),
+        )
+        .route(
+            "/messages/{message_id}",
+            patch(edit_message).delete(delete_message),
+        )
         .route("/messages/{message_id}/reactions", post(add_reaction))
         .route(
             "/messages/{message_id}/reactions/{emoji}",
@@ -153,9 +159,18 @@ async fn list_messages(
         });
     }
 
-    let next_cursor = rows.last().map(|r| encode_cursor(r.get("created_at"), r.get("id")));
+    let next_cursor = rows
+        .last()
+        .map(|r| encode_cursor(r.get("created_at"), r.get("id")));
 
-    (StatusCode::OK, Json(ListMessagesResponse { messages, next_cursor })).into_response()
+    (
+        StatusCode::OK,
+        Json(ListMessagesResponse {
+            messages,
+            next_cursor,
+        }),
+    )
+        .into_response()
 }
 
 async fn send_message(
@@ -191,7 +206,14 @@ async fn send_message(
     Span::current().record("organization_id", tracing::field::display(org_id));
 
     // 2. validate membership + 3. permission check
-    let ok = match util::can(&state.pool, auth.user_id, org_id, permissions::Permission::MessagesSend).await {
+    let ok = match util::can(
+        &state.pool,
+        auth.user_id,
+        org_id,
+        permissions::Permission::MessagesSend,
+    )
+    .await
+    {
         Ok(v) => v,
         Err(e) => return e,
     };
@@ -319,7 +341,11 @@ async fn edit_message(
         "#,
     )
     .bind(message_id)
-    .bind(if body.is_empty() { None::<String> } else { Some(body) })
+    .bind(if body.is_empty() {
+        None::<String>
+    } else {
+        Some(body)
+    })
     .execute(&state.pool)
     .await;
 
@@ -469,7 +495,10 @@ async fn remove_reaction(
     }
 }
 
-async fn get_channel_org(pool: &PgPool, channel_id: Uuid) -> Result<(Uuid, String), axum::response::Response> {
+async fn get_channel_org(
+    pool: &PgPool,
+    channel_id: Uuid,
+) -> Result<(Uuid, String), axum::response::Response> {
     let row = sqlx::query(
         r#"
         select organization_id, kind
@@ -489,7 +518,10 @@ async fn get_channel_org(pool: &PgPool, channel_id: Uuid) -> Result<(Uuid, Strin
     Ok((row.get("organization_id"), row.get("kind")))
 }
 
-async fn get_message_org(pool: &PgPool, message_id: Uuid) -> Result<Uuid, axum::response::Response> {
+async fn get_message_org(
+    pool: &PgPool,
+    message_id: Uuid,
+) -> Result<Uuid, axum::response::Response> {
     let row = sqlx::query(
         r#"
         select organization_id
@@ -513,7 +545,9 @@ async fn parse_before(
     channel_id: Uuid,
     before: Option<&str>,
 ) -> Result<Option<(OffsetDateTime, Uuid)>, axum::response::Response> {
-    let Some(before) = before else { return Ok(None); };
+    let Some(before) = before else {
+        return Ok(None);
+    };
 
     // Allow UUID (message id) or RFC3339 timestamp
     if let Ok(message_id) = Uuid::parse_str(before) {

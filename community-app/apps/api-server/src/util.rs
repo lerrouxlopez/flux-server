@@ -1,5 +1,5 @@
 use api::{ApiError, ApiErrorCode};
-use permissions::{perms, Perms, Permission};
+use permissions::{perms, Permission, Perms};
 use sqlx::{PgPool, Row};
 use uuid::Uuid;
 
@@ -18,7 +18,11 @@ pub fn is_unique_violation(err: &sqlx::Error) -> bool {
     }
 }
 
-pub async fn is_member(pool: &PgPool, org_id: Uuid, user_id: Uuid) -> Result<bool, axum::response::Response> {
+pub async fn is_member(
+    pool: &PgPool,
+    org_id: Uuid,
+    user_id: Uuid,
+) -> Result<bool, axum::response::Response> {
     let ok = sqlx::query_scalar::<_, i64>(
         r#"
         select 1
@@ -36,7 +40,11 @@ pub async fn is_member(pool: &PgPool, org_id: Uuid, user_id: Uuid) -> Result<boo
     Ok(ok)
 }
 
-pub async fn member_perms(pool: &PgPool, org_id: Uuid, user_id: Uuid) -> Result<Perms, axum::response::Response> {
+pub async fn member_perms(
+    pool: &PgPool,
+    org_id: Uuid,
+    user_id: Uuid,
+) -> Result<Perms, axum::response::Response> {
     let row = sqlx::query(
         r#"
         select m.role, r.permissions
@@ -100,4 +108,31 @@ pub async fn can_access_channel(
     let org_id: Uuid = row.get("organization_id");
     let perms = member_perms(pool, org_id, user_id).await?;
     Ok(permissions::has(perms, perms::CHANNELS_VIEW))
+}
+
+pub async fn write_audit_log(
+    pool: &PgPool,
+    organization_id: Uuid,
+    actor_user_id: Option<Uuid>,
+    action: &'static str,
+    target_type: Option<&'static str>,
+    target_id: Option<Uuid>,
+    metadata: serde_json::Value,
+) {
+    let id = Uuid::now_v7();
+    let _ = sqlx::query(
+        r#"
+        insert into audit_logs (id, organization_id, actor_user_id, action, target_type, target_id, metadata, created_at)
+        values ($1, $2, $3, $4, $5, $6, $7, now())
+        "#,
+    )
+    .bind(id)
+    .bind(organization_id)
+    .bind(actor_user_id)
+    .bind(action)
+    .bind(target_type)
+    .bind(target_id)
+    .bind(metadata)
+    .execute(pool)
+    .await;
 }

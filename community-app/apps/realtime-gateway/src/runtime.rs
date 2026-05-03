@@ -65,6 +65,13 @@ impl Runtime {
                     return;
                 }
             };
+            let mut sub_typing_stopped = match nats.subscribe("channel.*.typing.stopped").await {
+                Ok(s) => s,
+                Err(e) => {
+                    warn!(?e, "nats subscribe failed (typing.stopped)");
+                    return;
+                }
+            };
 
             loop {
                 tokio::select! {
@@ -86,18 +93,28 @@ impl Runtime {
                             hub.broadcast_event(&evt);
                         }
                     }
+                    msg = sub_typing_stopped.next() => {
+                        let Some(msg) = msg else { break; };
+                        if let Ok(evt) = serde_json::from_slice::<ServerEvent>(&msg.payload) {
+                            hub.broadcast_event(&evt);
+                        }
+                    }
                 }
             }
         });
     }
 
-    pub async fn handle_socket(
-        &self,
-        ctx: SocketContext,
-        socket: WebSocket,
-    ) -> anyhow::Result<()> {
+    pub async fn handle_socket(&self, ctx: SocketContext, socket: WebSocket) -> anyhow::Result<()> {
         self.hub
-            .handle_socket(ctx.user_id, ctx.org_ids, ctx.redis, ctx.nats, ctx.pool, socket)
+            .clone()
+            .handle_socket(
+                ctx.user_id,
+                ctx.org_ids,
+                ctx.redis,
+                ctx.nats,
+                ctx.pool,
+                socket,
+            )
             .await
     }
 }
@@ -109,8 +126,9 @@ struct ConnHandle {
 
 struct Hub {
     conns: DashMap<Uuid, ConnHandle>,
-    org_index: DashMap<Uuid, DashSet<Uuid>>,     // org_id -> conn_ids
+    org_index: DashMap<Uuid, DashSet<Uuid>>, // org_id -> conn_ids
     channel_index: DashMap<Uuid, DashSet<Uuid>>, // channel_id -> conn_ids
+    typing_gen: DashMap<(Uuid, Uuid), u64>,  // (channel_id, user_id) -> generation
 }
 
 impl Hub {
@@ -119,15 +137,13 @@ impl Hub {
             conns: DashMap::new(),
             org_index: DashMap::new(),
             channel_index: DashMap::new(),
+            typing_gen: DashMap::new(),
         }
     }
 
     fn insert_conn(&self, conn_id: Uuid, handle: ConnHandle) {
         for org_id in handle.org_ids.iter().copied() {
-            self.org_index
-                .entry(org_id)
-                .or_insert_with(DashSet::new)
-                .insert(conn_id);
+            self.org_index.entry(org_id).or_default().insert(conn_id);
         }
         self.conns.insert(conn_id, handle);
     }
@@ -146,19 +162,27 @@ impl Hub {
     }
 
     fn broadcast_to_org(&self, org_id: Uuid, evt: &ServerEvent) {
-        let Some(set) = self.org_index.get(&org_id) else { return; };
+        let Some(set) = self.org_index.get(&org_id) else {
+            return;
+        };
         for conn_id in set.iter() {
             if let Some(conn) = self.conns.get(conn_id.key()) {
-                let _ = conn.tx.send(Message::Text(serde_json::to_string(evt).unwrap_or_default().into()));
+                let _ = conn.tx.send(Message::Text(
+                    serde_json::to_string(evt).unwrap_or_default().into(),
+                ));
             }
         }
     }
 
     fn broadcast_to_channel(&self, channel_id: Uuid, evt: &ServerEvent) {
-        let Some(set) = self.channel_index.get(&channel_id) else { return; };
+        let Some(set) = self.channel_index.get(&channel_id) else {
+            return;
+        };
         for conn_id in set.iter() {
             if let Some(conn) = self.conns.get(conn_id.key()) {
-                let _ = conn.tx.send(Message::Text(serde_json::to_string(evt).unwrap_or_default().into()));
+                let _ = conn.tx.send(Message::Text(
+                    serde_json::to_string(evt).unwrap_or_default().into(),
+                ));
             }
         }
     }
@@ -174,17 +198,22 @@ impl Hub {
                 self.broadcast_to_channel(*channel_id, evt);
                 self.broadcast_to_org(*organization_id, evt);
             }
-            ServerEvent::PresenceChanged { organization_id, .. } => {
+            ServerEvent::PresenceChanged {
+                organization_id, ..
+            } => {
                 self.broadcast_to_org(*organization_id, evt);
             }
             ServerEvent::TypingStarted { channel_id, .. } => {
+                self.broadcast_to_channel(*channel_id, evt);
+            }
+            ServerEvent::TypingStopped { channel_id, .. } => {
                 self.broadcast_to_channel(*channel_id, evt);
             }
         }
     }
 
     async fn handle_socket(
-        &self,
+        self: Arc<Self>,
         user_id: Uuid,
         org_ids: Vec<Uuid>,
         mut redis: redis::aio::ConnectionManager,
@@ -213,7 +242,8 @@ impl Hub {
                 if let Err(e) = presence_set_online(&mut redis, &nats, user_id, &org_ids).await {
                     debug!(?e, "presence online failed");
                 }
-                let mut tick = tokio::time::interval(std::time::Duration::from_secs(PRESENCE_REFRESH_SECS));
+                let mut tick =
+                    tokio::time::interval(std::time::Duration::from_secs(PRESENCE_REFRESH_SECS));
                 loop {
                     tick.tick().await;
                     if let Err(e) = presence_refresh(&mut redis, user_id, &org_ids).await {
@@ -240,7 +270,18 @@ impl Hub {
             match inbound {
                 Message::Text(txt) => {
                     if let Ok(ev) = serde_json::from_str::<ClientEvent>(&txt) {
-                        if let Err(e) = handle_client_event(self, conn_id, &pool, &mut redis, &nats, user_id, &org_ids, ev).await {
+                        if let Err(e) = handle_client_event(
+                            self.clone(),
+                            conn_id,
+                            &pool,
+                            &mut redis,
+                            &nats,
+                            user_id,
+                            &org_ids,
+                            ev,
+                        )
+                        .await
+                        {
                             debug!(?e, "client event handling failed");
                         }
                     }
@@ -263,8 +304,9 @@ impl Hub {
     }
 }
 
+#[allow(clippy::too_many_arguments)]
 async fn handle_client_event(
-    hub: &Hub,
+    hub: Arc<Hub>,
     conn_id: Uuid,
     pool: &PgPool,
     redis: &mut redis::aio::ConnectionManager,
@@ -275,11 +317,27 @@ async fn handle_client_event(
 ) -> anyhow::Result<()> {
     match ev {
         ClientEvent::Ping => Ok(()),
+        ClientEvent::ChannelSubscribe { channel_id } => {
+            let org_id = ensure_channel_access(pool, user_id, org_ids, channel_id).await?;
+            hub.channel_index
+                .entry(channel_id)
+                .or_default()
+                .insert(conn_id);
+            info!(%user_id, %channel_id, %org_id, "subscribed channel");
+            Ok(())
+        }
+        ClientEvent::ChannelUnsubscribe { channel_id } => {
+            if let Some(set) = hub.channel_index.get(&channel_id) {
+                set.remove(&conn_id);
+            }
+            info!(%user_id, %channel_id, "unsubscribed channel");
+            Ok(())
+        }
         ClientEvent::TypingStart { channel_id } => {
             let org_id = ensure_channel_access(pool, user_id, org_ids, channel_id).await?;
             hub.channel_index
                 .entry(channel_id)
-                .or_insert_with(DashSet::new)
+                .or_default()
                 .insert(conn_id);
 
             let typing_key = format!("typing:{channel_id}:{user_id}");
@@ -288,7 +346,10 @@ async fn handle_client_event(
                 .await
                 .unwrap_or(());
 
-            let evt = ServerEvent::TypingStarted { channel_id, user_id };
+            let evt = ServerEvent::TypingStarted {
+                channel_id,
+                user_id,
+            };
             let payload = serde_json::to_vec(&evt)?;
             let subject = format!("channel.{channel_id}.typing.started");
             let _ = nats.publish(subject, payload.into()).await;
@@ -298,6 +359,15 @@ async fn handle_client_event(
             // Best available "channel members" fanout (we don't have per-channel membership tables yet):
             // broadcast to all org member connections too.
             hub.broadcast_to_org(org_id, &evt);
+
+            // Server-driven expiry: schedule a stop emit if the key expires and no newer typing.start happened.
+            schedule_typing_expiry(
+                hub.clone(),
+                redis.clone(),
+                nats.clone(),
+                channel_id,
+                user_id,
+            );
             Ok(())
         }
         ClientEvent::TypingStop { channel_id } => {
@@ -309,9 +379,63 @@ async fn handle_client_event(
             }
             let typing_key = format!("typing:{channel_id}:{user_id}");
             let _: () = redis.del(typing_key).await.unwrap_or(());
+            emit_typing_stopped(&hub, nats, channel_id, user_id).await;
             Ok(())
         }
     }
+}
+
+fn schedule_typing_expiry(
+    hub: Arc<Hub>,
+    redis: redis::aio::ConnectionManager,
+    nats: async_nats::Client,
+    channel_id: Uuid,
+    user_id: Uuid,
+) {
+    let key = (channel_id, user_id);
+    let gen = {
+        let mut entry = hub.typing_gen.entry(key).or_insert(0);
+        *entry += 1;
+        *entry
+    };
+
+    tokio::spawn(async move {
+        tokio::time::sleep(std::time::Duration::from_millis(
+            TYPING_TTL_SECS * 1000 + 150,
+        ))
+        .await;
+
+        // Only the latest generation is allowed to emit a stop.
+        let current = hub.typing_gen.get(&key).map(|v| *v).unwrap_or(0);
+        if current != gen {
+            return;
+        }
+
+        let mut redis = redis;
+        let typing_key = format!("typing:{channel_id}:{user_id}");
+        let exists: bool = redis.exists(&typing_key).await.unwrap_or(false);
+        if exists {
+            return;
+        }
+
+        emit_typing_stopped(&hub, &nats, channel_id, user_id).await;
+    });
+}
+
+async fn emit_typing_stopped(
+    hub: &Hub,
+    nats: &async_nats::Client,
+    channel_id: Uuid,
+    user_id: Uuid,
+) {
+    let evt = ServerEvent::TypingStopped {
+        channel_id,
+        user_id,
+    };
+    let payload = serde_json::to_vec(&evt).unwrap_or_default();
+    let subject = format!("channel.{channel_id}.typing.stopped");
+    let _ = nats.publish(subject, payload.into()).await;
+    hub.broadcast_to_channel(channel_id, &evt);
 }
 
 async fn ensure_channel_access(
@@ -439,7 +563,11 @@ async fn presence_set_offline(
     Ok(())
 }
 
-async fn handle_message_created(hub: &Hub, pool: &PgPool, payload: bytes::Bytes) -> anyhow::Result<()> {
+async fn handle_message_created(
+    hub: &Hub,
+    pool: &PgPool,
+    payload: bytes::Bytes,
+) -> anyhow::Result<()> {
     // New format: typed envelope from `events` crate.
     if let Ok(env) =
         serde_json::from_slice::<events::envelope::EventEnvelope<MessageCreatedData>>(&payload)
@@ -447,7 +575,9 @@ async fn handle_message_created(hub: &Hub, pool: &PgPool, payload: bytes::Bytes)
         let message = if let Some(m) = env.data.message {
             m
         } else if let Some(message_id) = env.data.message_id {
-            fetch_message(pool, message_id).await?.unwrap_or(Value::Null)
+            fetch_message(pool, message_id)
+                .await?
+                .unwrap_or(Value::Null)
         } else {
             Value::Null
         };
@@ -467,7 +597,9 @@ async fn handle_message_created(hub: &Hub, pool: &PgPool, payload: bytes::Bytes)
     let message = if let Some(m) = evt_in.message {
         m
     } else if let Some(message_id) = evt_in.message_id {
-        fetch_message(pool, message_id).await?.unwrap_or(Value::Null)
+        fetch_message(pool, message_id)
+            .await?
+            .unwrap_or(Value::Null)
     } else {
         Value::Null
     };
@@ -512,7 +644,9 @@ async fn fetch_message(pool: &PgPool, message_id: Uuid) -> anyhow::Result<Option
     .fetch_optional(pool)
     .await?;
 
-    let Some(row) = row else { return Ok(None); };
+    let Some(row) = row else {
+        return Ok(None);
+    };
 
     let v = serde_json::json!({
         "id": row.get::<Uuid,_>("id"),

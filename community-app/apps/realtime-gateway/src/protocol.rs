@@ -7,6 +7,10 @@ use uuid::Uuid;
 pub enum ClientEvent {
     #[serde(rename = "ping")]
     Ping,
+    #[serde(rename = "channel.subscribe")]
+    ChannelSubscribe { channel_id: Uuid },
+    #[serde(rename = "channel.unsubscribe")]
+    ChannelUnsubscribe { channel_id: Uuid },
     #[serde(rename = "typing.start")]
     TypingStart { channel_id: Uuid },
     #[serde(rename = "typing.stop")]
@@ -30,4 +34,6 @@ pub enum ServerEvent {
     },
     #[serde(rename = "typing.started")]
     TypingStarted { channel_id: Uuid, user_id: Uuid },
+    #[serde(rename = "typing.stopped")]
+    TypingStopped { channel_id: Uuid, user_id: Uuid },
 }

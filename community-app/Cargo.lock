@@ -76,6 +76,7 @@ dependencies = [
  "domain",
  "dotenvy",
  "events",
+ "http-body-util",
  "media",
  "permissions",
  "rand 0.8.6",

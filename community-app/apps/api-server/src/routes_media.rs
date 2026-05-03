@@ -1,4 +1,5 @@
 use crate::{util, AppState, AuthContext};
+use api::ApiErrorCode;
 use axum::{
     extract::{Json, Path, State},
     http::StatusCode,
@@ -7,7 +8,6 @@ use axum::{
     Extension, Router,
 };
 use permissions::perms;
-use api::ApiErrorCode;
 use serde::{Deserialize, Serialize};
 use tracing::Span;
 use uuid::Uuid;
@@ -17,7 +17,10 @@ pub fn router() -> Router<AppState> {
         .route("/orgs/{org_id}/media/rooms", post(create_media_room))
         .route("/media/rooms/{room_id}", get(get_media_room))
         .route("/media/rooms/{room_id}/token", post(issue_token))
-        .route("/media/rooms/{room_id}/participants", get(list_participants))
+        .route(
+            "/media/rooms/{room_id}/participants",
+            get(list_participants),
+        )
 }
 
 #[derive(Debug, Deserialize)]
@@ -61,7 +64,7 @@ async fn create_media_room(
 
     let kind = match normalize_room_kind(&req.kind) {
         Ok(k) => k,
-        Err(e) => return e,
+        Err(e) => return *e,
     };
 
     let room = match media::create_media_room(
@@ -116,7 +119,10 @@ async fn get_media_room(
         Ok(p) => p,
         Err(e) => return e,
     };
-    Span::current().record("organization_id", tracing::field::display(room.organization_id));
+    Span::current().record(
+        "organization_id",
+        tracing::field::display(room.organization_id),
+    );
 
     (
         StatusCode::OK,
@@ -163,7 +169,10 @@ async fn issue_token(
         Ok(p) => p,
         Err(e) => return e,
     };
-    Span::current().record("organization_id", tracing::field::display(room.organization_id));
+    Span::current().record(
+        "organization_id",
+        tracing::field::display(room.organization_id),
+    );
 
     let token_req = media::TokenRequest {
         can_publish: req.can_publish,
@@ -209,7 +218,10 @@ async fn list_participants(
         Ok(p) => p,
         Err(e) => return e,
     };
-    Span::current().record("organization_id", tracing::field::display(room.organization_id));
+    Span::current().record(
+        "organization_id",
+        tracing::field::display(room.organization_id),
+    );
     if !permissions::has(perms, perms::VOICE_JOIN) {
         return util::api_error(ApiErrorCode::PermissionDenied);
     }
@@ -231,12 +243,14 @@ async fn list_participants(
     (StatusCode::OK, Json(v)).into_response()
 }
 
-fn normalize_room_kind(input: &str) -> Result<domain::MediaRoomKind, axum::response::Response> {
+fn normalize_room_kind(
+    input: &str,
+) -> Result<domain::MediaRoomKind, Box<axum::response::Response>> {
     let k = input.trim().to_lowercase();
     match k.as_str() {
         "voice" => Ok(domain::MediaRoomKind::Voice),
         "meeting" => Ok(domain::MediaRoomKind::Meeting),
         "stage" => Ok(domain::MediaRoomKind::Stage),
-        _ => Err(util::api_error(ApiErrorCode::ValidationError)),
+        _ => Err(Box::new(util::api_error(ApiErrorCode::ValidationError))),
     }
 }

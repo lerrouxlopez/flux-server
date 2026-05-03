@@ -6,11 +6,13 @@ export function Button(props: ButtonHTMLAttributes<HTMLButtonElement>) {
   return (
     <button
       className={clsx(
-        "rounded-md bg-indigo-600 px-4 py-2 text-sm font-medium text-white hover:bg-indigo-500 disabled:opacity-60",
+        "rounded-md px-4 py-2 text-sm font-medium text-white disabled:opacity-60",
         className,
       )}
+      style={{
+        backgroundColor: "var(--brand-primary, #4f46e5)",
+      }}
       {...rest}
     />
   );
 }
-

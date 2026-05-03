@@ -18,3 +18,8 @@ impl Hub {
     }
 }
 
+impl Default for Hub {
+    fn default() -> Self {
+        Self::new()
+    }
+}

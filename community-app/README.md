@@ -21,8 +21,22 @@ Centralized, multi-tenant collaboration platform (Discord/Slack/Zoom-style).
    - `cargo run -p worker`
 
 Health checks:
-- API: `curl http://localhost:8080/health`
+- API: `curl http://localhost:8080/healthz`
 - Realtime: `curl http://localhost:8081/health`
+
+Branding:
+- Public (pre-login): `GET /public/branding?host=<hostname-or-org-slug>`
+  - Resolves by `branding_profiles.custom_domain` or by org slug (first label of the host).
+  - Example: `curl -sS "http://localhost:8080/public/branding?host=acme.localhost"`
+  - Example (slug): `curl -sS "http://localhost:8080/public/branding?host=acme"`
+
+Auth + org smoke test:
+- Register:
+  - `curl -sS -X POST http://localhost:8080/auth/register -H "content-type: application/json" -d "{\"email\":\"me@example.com\",\"display_name\":\"Me\",\"password\":\"password123\"}"`
+- Login:
+  - `curl -sS -X POST http://localhost:8080/auth/login -H "content-type: application/json" -d "{\"email\":\"me@example.com\",\"password\":\"password123\"}"`
+- Create org (replace `$ACCESS_TOKEN`):
+  - `curl -sS -X POST http://localhost:8080/orgs -H "content-type: application/json" -H "authorization: Bearer $ACCESS_TOKEN" -d "{\"name\":\"Acme\",\"slug\":\"acme\"}"`
 
 ### LiveKit local vs prod
 - Local: `docker compose` runs LiveKit with `--dev` for convenience only.

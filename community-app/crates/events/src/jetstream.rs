@@ -26,10 +26,20 @@ pub fn context(client: async_nats::Client) -> jetstream::Context {
 }
 
 pub async fn ensure_streams(js: &jetstream::Context, cfg: &JetStreamConfig) -> anyhow::Result<()> {
-    ensure_stream(js, &cfg.notifications_stream, vec!["org.*.user.*.notification.created"]).await?;
+    ensure_stream(
+        js,
+        &cfg.notifications_stream,
+        vec!["org.*.user.*.notification.created"],
+    )
+    .await?;
     ensure_stream(js, &cfg.audit_stream, vec!["org.*.>"]).await?;
     ensure_stream(js, &cfg.search_stream, vec!["org.*.channel.*.message.*"]).await?;
-    ensure_stream(js, &cfg.email_stream, vec!["org.*.user.*.notification.created"]).await?;
+    ensure_stream(
+        js,
+        &cfg.email_stream,
+        vec!["org.*.user.*.notification.created"],
+    )
+    .await?;
     ensure_stream(js, &cfg.cleanup_stream, vec!["cleanup.>"]).await?;
     Ok(())
 }

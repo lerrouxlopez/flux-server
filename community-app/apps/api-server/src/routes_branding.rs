@@ -1,12 +1,12 @@
 use crate::{util, AppState, AuthContext};
+use api::ApiErrorCode;
 use axum::{
-    extract::{Query, Path, State, Json},
+    extract::{Json, Path, Query, State},
     http::StatusCode,
     response::IntoResponse,
     routing::get,
     Extension, Router,
 };
-use api::ApiErrorCode;
 use serde::{Deserialize, Serialize};
 use sqlx::Row;
 use time::OffsetDateTime;
@@ -16,7 +16,10 @@ use uuid::Uuid;
 pub fn router() -> Router<AppState> {
     Router::new()
         .route("/public/branding", get(public_branding))
-        .route("/orgs/{org_id}/branding", get(get_org_branding).patch(patch_org_branding))
+        .route(
+            "/orgs/{org_id}/branding",
+            get(get_org_branding).patch(patch_org_branding),
+        )
 }
 
 #[derive(Debug, Deserialize)]
@@ -169,7 +172,14 @@ async fn patch_org_branding(
     Json(req): Json<PatchBrandingRequest>,
 ) -> impl IntoResponse {
     Span::current().record("organization_id", tracing::field::display(org_id));
-    let ok = match util::can(&state.pool, auth.user_id, org_id, permissions::Permission::BrandingManage).await {
+    let ok = match util::can(
+        &state.pool,
+        auth.user_id,
+        org_id,
+        permissions::Permission::BrandingManage,
+    )
+    .await
+    {
         Ok(v) => v,
         Err(e) => return e,
     };
@@ -213,7 +223,19 @@ async fn patch_org_branding(
 
     match updated {
         Ok(r) if r.rows_affected() == 0 => util::api_error(ApiErrorCode::NotFound),
-        Ok(_) => (StatusCode::OK, Json(serde_json::json!({"status":"ok"}))).into_response(),
+        Ok(_) => {
+            util::write_audit_log(
+                &state.pool,
+                org_id,
+                Some(auth.user_id),
+                "branding.updated",
+                Some("branding_profile"),
+                Some(org_id),
+                serde_json::json!({}),
+            )
+            .await;
+            (StatusCode::OK, Json(serde_json::json!({"status":"ok"}))).into_response()
+        }
         Err(_) => util::api_error(ApiErrorCode::InternalError),
     }
 }

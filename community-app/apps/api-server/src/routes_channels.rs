@@ -1,4 +1,5 @@
 use crate::{util, AppState, AuthContext};
+use api::ApiErrorCode;
 use axum::{
     extract::{Json, Path, State},
     http::StatusCode,
@@ -6,7 +7,6 @@ use axum::{
     routing::get,
     Extension, Router,
 };
-use api::ApiErrorCode;
 use permissions::perms;
 use serde::{Deserialize, Serialize};
 use sqlx::Row;
@@ -16,10 +16,15 @@ use uuid::Uuid;
 
 pub fn router() -> Router<AppState> {
     Router::new()
-        .route("/orgs/{org_id}/channels", get(list_org_channels).post(create_channel))
+        .route(
+            "/orgs/{org_id}/channels",
+            get(list_org_channels).post(create_channel),
+        )
         .route(
             "/channels/{channel_id}",
-            get(get_channel).patch(update_channel).delete(delete_channel),
+            get(get_channel)
+                .patch(update_channel)
+                .delete(delete_channel),
         )
 }
 
@@ -101,7 +106,14 @@ async fn create_channel(
     Json(req): Json<CreateChannelRequest>,
 ) -> impl IntoResponse {
     Span::current().record("organization_id", tracing::field::display(org_id));
-    let ok = match util::can(&state.pool, auth.user_id, org_id, permissions::Permission::ChannelsCreate).await {
+    let ok = match util::can(
+        &state.pool,
+        auth.user_id,
+        org_id,
+        permissions::Permission::ChannelsCreate,
+    )
+    .await
+    {
         Ok(v) => v,
         Err(e) => return e,
     };
@@ -112,7 +124,7 @@ async fn create_channel(
     let name = req.name.trim().to_string();
     let kind = match normalize_kind(&req.kind) {
         Ok(k) => k,
-        Err(e) => return e,
+        Err(e) => return *e,
     };
     if name.is_empty() {
         return util::api_error(ApiErrorCode::ValidationError);
@@ -136,17 +148,29 @@ async fn create_channel(
     .await;
 
     match inserted {
-        Ok(_) => (
-            StatusCode::OK,
-            Json(ChannelResponse {
-                id: channel_id,
-                organization_id: org_id,
-                name,
-                kind,
-                created_at: now,
-            }),
-        )
-            .into_response(),
+        Ok(_) => {
+            util::write_audit_log(
+                &state.pool,
+                org_id,
+                Some(auth.user_id),
+                "channel.created",
+                Some("channel"),
+                Some(channel_id),
+                serde_json::json!({"kind": kind, "name": name}),
+            )
+            .await;
+            (
+                StatusCode::OK,
+                Json(ChannelResponse {
+                    id: channel_id,
+                    organization_id: org_id,
+                    name,
+                    kind,
+                    created_at: now,
+                }),
+            )
+                .into_response()
+        }
         Err(_) => util::api_error(ApiErrorCode::InternalError),
     }
 }
@@ -231,11 +255,14 @@ async fn update_channel(
         return util::api_error(ApiErrorCode::PermissionDenied);
     }
 
-    let name = req.name.map(|n| n.trim().to_string()).filter(|n| !n.is_empty());
+    let name = req
+        .name
+        .map(|n| n.trim().to_string())
+        .filter(|n| !n.is_empty());
     let kind = match req.kind {
         Some(k) => match normalize_kind(&k) {
             Ok(v) => Some(v),
-            Err(e) => return e,
+            Err(e) => return *e,
         },
         None => None,
     };
@@ -256,7 +283,19 @@ async fn update_channel(
     .await;
 
     match updated {
-        Ok(_) => (StatusCode::OK, Json(serde_json::json!({"status":"ok"}))).into_response(),
+        Ok(_) => {
+            util::write_audit_log(
+                &state.pool,
+                org_id,
+                Some(auth.user_id),
+                "channel.updated",
+                Some("channel"),
+                Some(channel_id),
+                serde_json::json!({}),
+            )
+            .await;
+            (StatusCode::OK, Json(serde_json::json!({"status":"ok"}))).into_response()
+        }
         Err(_) => util::api_error(ApiErrorCode::InternalError),
     }
 }
@@ -300,15 +339,27 @@ async fn delete_channel(
         .await;
 
     match deleted {
-        Ok(_) => (StatusCode::OK, Json(serde_json::json!({"status":"ok"}))).into_response(),
+        Ok(_) => {
+            util::write_audit_log(
+                &state.pool,
+                org_id,
+                Some(auth.user_id),
+                "channel.deleted",
+                Some("channel"),
+                Some(channel_id),
+                serde_json::json!({}),
+            )
+            .await;
+            (StatusCode::OK, Json(serde_json::json!({"status":"ok"}))).into_response()
+        }
         Err(_) => util::api_error(ApiErrorCode::InternalError),
     }
 }
 
-fn normalize_kind(input: &str) -> Result<String, axum::response::Response> {
+fn normalize_kind(input: &str) -> Result<String, Box<axum::response::Response>> {
     let k = input.trim().to_lowercase();
     match k.as_str() {
         "text" | "voice" | "announcement" | "private" => Ok(k),
-        _ => Err(util::api_error(ApiErrorCode::ValidationError)),
+        _ => Err(Box::new(util::api_error(ApiErrorCode::ValidationError))),
     }
 }

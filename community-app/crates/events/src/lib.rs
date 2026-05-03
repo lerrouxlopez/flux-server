@@ -1,7 +1,7 @@
 use async_nats::Client;
 
-pub mod envelope;
 pub mod core;
+pub mod envelope;
 pub mod jetstream;
 pub mod subjects;
 

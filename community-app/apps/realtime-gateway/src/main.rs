@@ -1,3 +1,4 @@
+use api::{ApiError, ApiErrorCode};
 use axum::{
     extract::{Query, State, WebSocketUpgrade},
     http::HeaderMap,
@@ -10,7 +11,6 @@ use std::{net::SocketAddr, sync::Arc};
 use tower_http::trace::TraceLayer;
 use tracing::{info, warn};
 use uuid::Uuid;
-use api::{ApiError, ApiErrorCode};
 
 mod protocol;
 mod runtime;
@@ -80,15 +80,13 @@ async fn ws_handler(
     Query(q): Query<WsQuery>,
     ws: WebSocketUpgrade,
 ) -> impl IntoResponse {
-    let token = bearer_token(&headers)
-        .map(|s| s.to_string())
-        .or_else(|| {
-            if state.app_env == "local" {
-                q.access_token.clone().or(q.token.clone())
-            } else {
-                None
-            }
-        });
+    let token = bearer_token(&headers).map(|s| s.to_string()).or_else(|| {
+        if state.app_env == "local" {
+            q.access_token.clone().or(q.token.clone())
+        } else {
+            None
+        }
+    });
 
     let Some(token) = token else {
         return ApiError::new(ApiErrorCode::Unauthenticated).into_response();
@@ -115,13 +113,16 @@ async fn ws_handler(
     ws.on_upgrade(move |socket| async move {
         if let Err(err) = state
             .rt
-            .handle_socket(runtime::SocketContext {
-                user_id,
-                org_ids,
-                redis: state.redis,
-                nats: state.nats,
-                pool: state.pool,
-            }, socket)
+            .handle_socket(
+                runtime::SocketContext {
+                    user_id,
+                    org_ids,
+                    redis: state.redis,
+                    nats: state.nats,
+                    pool: state.pool,
+                },
+                socket,
+            )
             .await
         {
             warn!(?err, "ws session ended with error");
@@ -130,11 +131,19 @@ async fn ws_handler(
 }
 
 fn bearer_token(headers: &HeaderMap) -> Option<&str> {
-    let value = headers.get(axum::http::header::AUTHORIZATION)?.to_str().ok()?;
-    value.strip_prefix("Bearer ").or_else(|| value.strip_prefix("bearer "))
+    let value = headers
+        .get(axum::http::header::AUTHORIZATION)?
+        .to_str()
+        .ok()?;
+    value
+        .strip_prefix("Bearer ")
+        .or_else(|| value.strip_prefix("bearer "))
 }
 
-async fn load_memberships(pool: &PgPool, user_id: Uuid) -> Result<Vec<Uuid>, axum::response::Response> {
+async fn load_memberships(
+    pool: &PgPool,
+    user_id: Uuid,
+) -> Result<Vec<Uuid>, axum::response::Response> {
     let rows = sqlx::query_scalar::<_, Uuid>(
         r#"
         select organization_id

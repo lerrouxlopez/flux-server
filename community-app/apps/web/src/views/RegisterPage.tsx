@@ -4,12 +4,14 @@ import { Input } from "../components/Input";
 import { useNavigate, Link } from "react-router-dom";
 import { useAuthStore } from "../state/auth";
 import { apiFetch } from "../api/client";
+import { useBrandingStore } from "../state/branding";
 
 type AuthResponse = { access_token: string; refresh_token: string };
 
 export function RegisterPage() {
   const nav = useNavigate();
   const setTokens = useAuthStore((s) => s.setTokens);
+  const branding = useBrandingStore((s) => s.branding);
   const [email, setEmail] = useState("");
   const [displayName, setDisplayName] = useState("");
   const [password, setPassword] = useState("");
@@ -36,6 +38,11 @@ export function RegisterPage() {
 
   return (
     <div className="mx-auto max-w-md rounded-xl border border-slate-800 bg-slate-900/40 p-6">
+      {branding?.logo_url ? (
+        <div className="mb-4 flex justify-center">
+          <img src={branding.logo_url} alt={branding.app_name} className="h-10" />
+        </div>
+      ) : null}
       <h1 className="text-xl font-semibold">Register</h1>
       <p className="mt-1 text-sm text-slate-300">
         Already have an account?{" "}
@@ -73,4 +80,3 @@ export function RegisterPage() {
     </div>
   );
 }
-

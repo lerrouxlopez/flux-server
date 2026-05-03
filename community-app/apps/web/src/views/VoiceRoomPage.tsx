@@ -1,6 +1,6 @@
 import { useParams } from "react-router-dom";
 import { useQuery } from "@tanstack/react-query";
-import { LiveKitRoom } from "@livekit/components-react";
+import { LiveKitRoom, VideoConference } from "@livekit/components-react";
 import "@livekit/components-styles";
 import { apiFetch } from "../api/client";
 import type { TokenResponse, MediaRoom } from "../api/types";
@@ -33,7 +33,9 @@ export function VoiceRoomPage() {
     <div className="rounded-xl border border-slate-800 bg-slate-900/30 p-4">
       <h1 className="text-lg font-semibold">{room.data.name}</h1>
       <div className="mt-3 h-[70vh] overflow-hidden rounded-lg border border-slate-800 bg-black">
-        <LiveKitRoom serverUrl={token.data.livekit_url} token={token.data.token} connect={true} />
+        <LiveKitRoom serverUrl={token.data.livekit_url} token={token.data.token} connect={true}>
+          <VideoConference />
+        </LiveKitRoom>
       </div>
     </div>
   );

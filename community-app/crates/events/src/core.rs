@@ -11,4 +11,3 @@ pub async fn publish<T: Serialize>(
     nats.publish(subject.into(), payload.into()).await?;
     Ok(())
 }
-

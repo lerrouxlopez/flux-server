@@ -23,4 +23,3 @@ pub fn media_joined(org_id: Uuid, room_id: Uuid) -> String {
 pub fn media_left(org_id: Uuid, room_id: Uuid) -> String {
     format!("org.{org_id}.media.{room_id}.left")
 }
-

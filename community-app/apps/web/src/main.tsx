@@ -13,6 +13,10 @@ async function bootstrap() {
   // Branding must load before login renders.
   const host = window.location.host;
   await useBrandingStore.getState().loadBranding(host);
+  const branding = useBrandingStore.getState().branding;
+  if (branding?.app_name) {
+    document.title = branding.app_name;
+  }
 
   ReactDOM.createRoot(document.getElementById("root")!).render(
     <React.StrictMode>
@@ -25,4 +29,3 @@ async function bootstrap() {
 }
 
 bootstrap();
-

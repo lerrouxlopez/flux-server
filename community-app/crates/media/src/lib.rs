@@ -97,7 +97,9 @@ pub async fn get_media_room(pool: &PgPool, room_id: Uuid) -> anyhow::Result<Opti
     .fetch_optional(pool)
     .await?;
 
-    let Some(row) = row else { return Ok(None); };
+    let Some(row) = row else {
+        return Ok(None);
+    };
 
     let kind: String = row.get("kind");
     let kind = match kind.as_str() {

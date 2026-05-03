@@ -12,8 +12,8 @@ use time::OffsetDateTime;
 use uuid::Uuid;
 use validator::ValidateEmail;
 
-use api::ApiErrorCode;
 use crate::util;
+use api::ApiErrorCode;
 use redis::AsyncCommands;
 pub fn router() -> Router<AppState> {
     Router::new()
@@ -56,12 +56,18 @@ pub struct MeResponse {
     pub created_at: OffsetDateTime,
 }
 
-async fn register(State(state): State<AppState>, Json(req): Json<RegisterRequest>) -> impl IntoResponse {
+async fn register(
+    State(state): State<AppState>,
+    Json(req): Json<RegisterRequest>,
+) -> impl IntoResponse {
     if !req.email.validate_email() {
         return util::api_error(ApiErrorCode::ValidationError);
     }
     if req.password.len() < 8 {
-        return util::api_error_msg(ApiErrorCode::ValidationError, "Password must be at least 8 characters.");
+        return util::api_error_msg(
+            ApiErrorCode::ValidationError,
+            "Password must be at least 8 characters.",
+        );
     }
 
     let email = req.email.trim().to_lowercase();
@@ -152,7 +158,10 @@ async fn login(State(state): State<AppState>, Json(req): Json<LoginRequest>) -> 
     }
 }
 
-async fn refresh(State(state): State<AppState>, Json(req): Json<RefreshRequest>) -> impl IntoResponse {
+async fn refresh(
+    State(state): State<AppState>,
+    Json(req): Json<RefreshRequest>,
+) -> impl IntoResponse {
     let now = OffsetDateTime::now_utc();
     let token_hash = auth::hash_refresh_token(&state.auth_cfg, &req.refresh_token);
 
@@ -237,7 +246,10 @@ async fn refresh(State(state): State<AppState>, Json(req): Json<RefreshRequest>)
         .into_response()
 }
 
-async fn logout(State(state): State<AppState>, Json(req): Json<RefreshRequest>) -> impl IntoResponse {
+async fn logout(
+    State(state): State<AppState>,
+    Json(req): Json<RefreshRequest>,
+) -> impl IntoResponse {
     let token_hash = auth::hash_refresh_token(&state.auth_cfg, &req.refresh_token);
     let res = sqlx::query(
         r#"
@@ -256,7 +268,10 @@ async fn logout(State(state): State<AppState>, Json(req): Json<RefreshRequest>) 
     }
 }
 
-async fn me(State(state): State<AppState>, auth: Option<axum::Extension<AuthContext>>) -> impl IntoResponse {
+async fn me(
+    State(state): State<AppState>,
+    auth: Option<axum::Extension<AuthContext>>,
+) -> impl IntoResponse {
     let Some(axum::Extension(auth)) = auth else {
         return util::api_error(ApiErrorCode::Unauthenticated);
     };
@@ -291,7 +306,11 @@ async fn me(State(state): State<AppState>, auth: Option<axum::Extension<AuthCont
         .into_response()
 }
 
-async fn issue_tokens(pool: &PgPool, cfg: &auth::AuthConfig, user_id: Uuid) -> anyhow::Result<AuthResponse> {
+async fn issue_tokens(
+    pool: &PgPool,
+    cfg: &auth::AuthConfig,
+    user_id: Uuid,
+) -> anyhow::Result<AuthResponse> {
     let now = OffsetDateTime::now_utc();
     let (refresh_token, refresh_hash, expires_at) = new_refresh_token_values(cfg, now);
     let refresh_id = Uuid::now_v7();
@@ -317,7 +336,10 @@ async fn issue_tokens(pool: &PgPool, cfg: &auth::AuthConfig, user_id: Uuid) -> a
     })
 }
 
-fn new_refresh_token_values(cfg: &auth::AuthConfig, now: OffsetDateTime) -> (String, String, OffsetDateTime) {
+fn new_refresh_token_values(
+    cfg: &auth::AuthConfig,
+    now: OffsetDateTime,
+) -> (String, String, OffsetDateTime) {
     let refresh_token = auth::new_refresh_token();
     let refresh_hash = auth::hash_refresh_token(cfg, &refresh_token);
     let expires_at = now + cfg.refresh_ttl;

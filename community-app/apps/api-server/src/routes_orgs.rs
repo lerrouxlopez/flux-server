@@ -6,10 +6,10 @@ use axum::{
     routing::{get, post},
     Extension, Router,
 };
+use base64::Engine;
 use permissions::{perms, Perms};
 use rand::rngs::OsRng;
 use rand::RngCore;
-use base64::Engine;
 use serde::{Deserialize, Serialize};
 use sqlx::Row;
 use time::OffsetDateTime;
@@ -124,7 +124,9 @@ async fn create_org(
         | perms::MESSAGES_DELETE_OWN
         | perms::MESSAGES_REACT
         | perms::VOICE_JOIN
-        | perms::VOICE_SPEAK;
+        | perms::VOICE_SPEAK
+        | perms::VIDEO_START
+        | perms::SCREEN_SHARE;
 
     let guest_permissions: Perms = perms::CHANNELS_VIEW | perms::VOICE_JOIN;
 
@@ -260,7 +262,10 @@ async fn create_org(
         .into_response()
 }
 
-async fn list_orgs(State(state): State<AppState>, Extension(auth): Extension<AuthContext>) -> impl IntoResponse {
+async fn list_orgs(
+    State(state): State<AppState>,
+    Extension(auth): Extension<AuthContext>,
+) -> impl IntoResponse {
     let rows = sqlx::query(
         r#"
         select o.id, o.slug, o.name, o.created_at
@@ -420,15 +425,27 @@ async fn create_invite(
     .await;
 
     match inserted {
-        Ok(_) => (
-            StatusCode::OK,
-            Json(InviteResponse {
-                code,
-                expires_at,
-                max_uses: req.max_uses,
-            }),
-        )
-            .into_response(),
+        Ok(_) => {
+            util::write_audit_log(
+                &state.pool,
+                org_id,
+                Some(auth.user_id),
+                "org.invite.created",
+                Some("invite"),
+                Some(invite_id),
+                serde_json::json!({"max_uses": req.max_uses, "expires_at": expires_at}),
+            )
+            .await;
+            (
+                StatusCode::OK,
+                Json(InviteResponse {
+                    code,
+                    expires_at,
+                    max_uses: req.max_uses,
+                }),
+            )
+                .into_response()
+        }
         Err(_) => util::api_error(ApiErrorCode::InternalError),
     }
 }
@@ -467,7 +484,19 @@ async fn add_member(
         .await;
 
         return match res {
-            Ok(_) => (StatusCode::OK, Json(serde_json::json!({"status":"ok"}))).into_response(),
+            Ok(_) => {
+                util::write_audit_log(
+                    &state.pool,
+                    org_id,
+                    Some(auth.user_id),
+                    "org.member.added",
+                    Some("user"),
+                    Some(user_id),
+                    serde_json::json!({}),
+                )
+                .await;
+                (StatusCode::OK, Json(serde_json::json!({"status":"ok"}))).into_response()
+            }
             Err(_) => util::api_error(ApiErrorCode::InternalError),
         };
     }

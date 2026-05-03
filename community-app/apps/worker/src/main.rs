@@ -163,7 +163,10 @@ async fn handle_message_created(
     Ok(())
 }
 
-async fn run_cleanup(pool: &PgPool, redis: &mut redis::aio::ConnectionManager) -> anyhow::Result<()> {
+async fn run_cleanup(
+    pool: &PgPool,
+    redis: &mut redis::aio::ConnectionManager,
+) -> anyhow::Result<()> {
     // Expired refresh tokens.
     let _ = sqlx::query(
         r#"

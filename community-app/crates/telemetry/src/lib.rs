@@ -7,4 +7,3 @@ pub fn init() {
         .with(tracing_subscriber::fmt::layer())
         .init();
 }
-
