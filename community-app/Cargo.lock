@@ -747,7 +747,11 @@ version = "0.1.0"
 dependencies = [
  "anyhow",
  "async-nats",
+ "serde",
+ "serde_json",
+ "time",
  "tokio",
+ "uuid",
 ]
 
 [[package]]

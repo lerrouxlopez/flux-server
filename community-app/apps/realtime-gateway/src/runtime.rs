@@ -43,7 +43,7 @@ impl Runtime {
         let pool = self.pool.clone();
 
         tokio::spawn(async move {
-            let mut sub_msg = match nats.subscribe("org.*.message.created").await {
+            let mut sub_msg = match nats.subscribe("org.*.channel.*.message.created").await {
                 Ok(s) => s,
                 Err(e) => {
                     warn!(?e, "nats subscribe failed (message.created)");
@@ -396,18 +396,30 @@ async fn presence_set_offline(
     Ok(())
 }
 
-#[derive(Debug, serde::Deserialize)]
-struct NatsMessageCreated {
-    organization_id: Uuid,
-    channel_id: Uuid,
-    #[serde(default)]
-    message: Option<Value>,
-    #[serde(default)]
-    message_id: Option<Uuid>,
-}
-
 async fn handle_message_created(hub: &Hub, pool: &PgPool, payload: bytes::Bytes) -> anyhow::Result<()> {
-    let evt_in: NatsMessageCreated = serde_json::from_slice(&payload)?;
+    // New format: typed envelope from `events` crate.
+    if let Ok(env) =
+        serde_json::from_slice::<events::envelope::EventEnvelope<MessageCreatedData>>(&payload)
+    {
+        let message = if let Some(m) = env.data.message {
+            m
+        } else if let Some(message_id) = env.data.message_id {
+            fetch_message(pool, message_id).await?.unwrap_or(Value::Null)
+        } else {
+            Value::Null
+        };
+
+        let evt = ServerEvent::MessageCreated {
+            organization_id: env.organization_id,
+            channel_id: env.data.channel_id,
+            message,
+        };
+        hub.broadcast_event(&evt);
+        return Ok(());
+    }
+
+    // Back-compat: older gateway payloads.
+    let evt_in: LegacyMessageCreated = serde_json::from_slice(&payload)?;
 
     let message = if let Some(m) = evt_in.message {
         m
@@ -424,6 +436,25 @@ async fn handle_message_created(hub: &Hub, pool: &PgPool, payload: bytes::Bytes)
     };
     hub.broadcast_event(&evt);
     Ok(())
+}
+
+#[derive(Debug, serde::Deserialize)]
+struct MessageCreatedData {
+    channel_id: Uuid,
+    #[serde(default)]
+    message: Option<Value>,
+    #[serde(default)]
+    message_id: Option<Uuid>,
+}
+
+#[derive(Debug, serde::Deserialize)]
+struct LegacyMessageCreated {
+    organization_id: Uuid,
+    channel_id: Uuid,
+    #[serde(default)]
+    message: Option<Value>,
+    #[serde(default)]
+    message_id: Option<Uuid>,
 }
 
 async fn fetch_message(pool: &PgPool, message_id: Uuid) -> anyhow::Result<Option<Value>> {
