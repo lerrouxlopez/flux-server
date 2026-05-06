@@ -14,6 +14,7 @@ import type {
 import { createRealtimeClient } from "../realtime/ws";
 import { Input } from "../components/Input";
 import { Button } from "../components/Button";
+import { useAuthStore } from "../state/auth";
 
 type SendMessageResponse = Message;
 
@@ -23,6 +24,7 @@ export function ChannelPage() {
   const { org_slug, channel_id } = useParams();
   const nav = useNavigate();
   const qc = useQueryClient();
+  const me = useAuthStore((s) => s.user);
 
   const [text, setText] = useState("");
   const [connected, setConnected] = useState(false);
@@ -73,7 +75,21 @@ export function ChannelPage() {
         const e = evt as any;
 
         if (e?.type === "message.created" && e.channel_id === channel_id) {
-          qc.invalidateQueries({ queryKey: ["messages", channel_id] });
+          const msg = e.message as Message | undefined;
+          if (msg && typeof msg.id === "string") {
+            qc.setQueryData<ListMessagesResponse>(["messages", channel_id], (prev) => {
+              const existing = prev?.messages ?? [];
+              if (existing.some((m) => m.id === msg.id)) return prev ?? { messages: [msg], next_cursor: null };
+              // Replace optimistic echo from the local sender if possible.
+              const filtered =
+                me?.id && msg.sender_id === me.id
+                  ? existing.filter((m) => !(m.id.startsWith("optimistic-") && m.body === msg.body))
+                  : existing;
+              return { ...(prev ?? {}), messages: [msg, ...filtered] };
+            });
+          } else {
+            qc.invalidateQueries({ queryKey: ["messages", channel_id] });
+          }
         }
 
         if (e?.type === "typing.started" && e.channel_id === channel_id) {
@@ -103,7 +119,7 @@ export function ChannelPage() {
       },
     });
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [channel_id, qc, org?.id]);
+  }, [channel_id, qc, org?.id, me?.id]);
 
   useEffect(() => {
     rt.start();

@@ -19,6 +19,25 @@ Health checks:
 - API: `curl http://localhost:8080/healthz`
 - Realtime: `curl http://localhost:8081/health`
 
+## Vertical slices (UI-first)
+
+### Slice 1: Chat (realtime)
+1. Register (`/register`) → redirects to `/orgs`
+2. Create org on `/orgs` → redirects to `/app/<org_slug>`
+3. Create a channel in the org sidebar
+4. Open the channel → send a message
+5. Observe the message arriving via WebSocket (`message.created`) without a manual refresh
+
+### Slice 2: Media (LiveKit)
+1. In a channel, click “Start meeting”
+2. The app creates a media room → requests a LiveKit token
+3. You join the LiveKit room (voice/video + screen share via LiveKit UI)
+
+### Slice 3: Branding
+1. Open admin panel (`/admin/<org_slug>`)
+2. Set branding (app name, logo URL, colors) and save
+3. Reload the app: login + shell should render branded, and `/public/branding?host=...` serves the public profile
+
 Branding:
 - Public (pre-login): `GET /public/branding?host=<hostname-or-org-slug>`
   - Resolves by `branding_profiles.custom_domain` or by org slug (first label of the host).
