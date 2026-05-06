@@ -7,3 +7,63 @@
   --brand-primary: #4f46e5;
   --brand-secondary: #111827;
 }
+
+/* Light mode is a "skin" over the existing dark-first Tailwind classes. */
+:root.theme-light {
+  color-scheme: light;
+  --brand-secondary: #f8fafc;
+}
+
+:root.theme-light .bg-slate-950\/80 {
+  background-color: rgba(248, 250, 252, 0.9) !important;
+}
+:root.theme-light .bg-slate-950\/60 {
+  background-color: rgba(248, 250, 252, 0.75) !important;
+}
+:root.theme-light .bg-slate-950\/30 {
+  background-color: rgba(248, 250, 252, 0.55) !important;
+}
+:root.theme-light .bg-slate-900 {
+  background-color: #ffffff !important;
+}
+:root.theme-light .bg-slate-900\/40 {
+  background-color: rgba(255, 255, 255, 0.85) !important;
+}
+:root.theme-light .bg-slate-900\/30 {
+  background-color: rgba(255, 255, 255, 0.75) !important;
+}
+:root.theme-light .bg-slate-800 {
+  background-color: #f1f5f9 !important;
+}
+:root.theme-light .bg-slate-800\/60 {
+  background-color: rgba(241, 245, 249, 0.8) !important;
+}
+:root.theme-light .bg-slate-700 {
+  background-color: #e2e8f0 !important;
+}
+:root.theme-light .bg-slate-600 {
+  background-color: #cbd5e1 !important;
+}
+
+:root.theme-light .border-slate-800 {
+  border-color: #e2e8f0 !important;
+}
+:root.theme-light .border-slate-700 {
+  border-color: #cbd5e1 !important;
+}
+
+:root.theme-light .text-slate-500 {
+  color: #64748b !important;
+}
+:root.theme-light .text-slate-400 {
+  color: #475569 !important;
+}
+:root.theme-light .text-slate-300 {
+  color: #334155 !important;
+}
+:root.theme-light .text-slate-200 {
+  color: #1f2937 !important;
+}
+:root.theme-light .text-slate-100 {
+  color: #0f172a !important;
+}

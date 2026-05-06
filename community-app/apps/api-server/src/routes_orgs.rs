@@ -261,8 +261,8 @@ async fn create_org(
     // Default branding profile
     let branding_insert = sqlx::query(
         r#"
-        insert into branding_profiles (organization_id, app_name, created_at, updated_at)
-        values ($1, $2, $3, $3)
+        insert into branding_profiles (organization_id, app_name, theme, created_at, updated_at)
+        values ($1, $2, 'dark', $3, $3)
         "#,
     )
     .bind(org_id)

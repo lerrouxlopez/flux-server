@@ -1,15 +1,17 @@
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { Link, useNavigate, useParams } from "react-router-dom";
 import { apiFetch } from "../api/client";
 import type { Channel, ChannelsResponse, OrgsListResponse } from "../api/types";
 import { Input } from "../components/Input";
 import { Button } from "../components/Button";
+import { useBrandingStore } from "../state/branding";
 
 export function OrgAppPage() {
   const { org_slug } = useParams();
   const nav = useNavigate();
   const qc = useQueryClient();
+  const loadOrgBranding = useBrandingStore((s) => s.loadOrgBranding);
   const [channelName, setChannelName] = useState("");
   const [channelKind, setChannelKind] = useState<"text" | "private">("text");
   const [err, setErr] = useState<string | null>(null);
@@ -20,6 +22,11 @@ export function OrgAppPage() {
   });
 
   const org = orgs.data?.organizations.find((o) => o.slug === org_slug);
+  // Apply org branding when entering the org.
+  useEffect(() => {
+    if (!org?.id) return;
+    loadOrgBranding(org.id).catch(() => {});
+  }, [loadOrgBranding, org?.id]);
 
   const channels = useQuery({
     enabled: !!org?.id,

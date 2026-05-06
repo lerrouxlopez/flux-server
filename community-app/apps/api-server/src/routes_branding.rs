@@ -31,6 +31,7 @@ struct PublicBrandingQuery {
 struct BrandingResponse {
     organization_id: Uuid,
     app_name: String,
+    theme: String,
     logo_url: Option<String>,
     icon_url: Option<String>,
     primary_color: Option<String>,
@@ -63,6 +64,7 @@ async fn public_branding(
         select
           b.organization_id,
           b.app_name,
+          b.theme,
           b.logo_url,
           b.icon_url,
           b.primary_color,
@@ -96,6 +98,7 @@ async fn public_branding(
         Json(BrandingResponse {
             organization_id: row.get("organization_id"),
             app_name: row.get("app_name"),
+            theme: row.get("theme"),
             logo_url: row.try_get("logo_url").ok(),
             icon_url: row.try_get("icon_url").ok(),
             primary_color: row.try_get("primary_color").ok(),
@@ -122,7 +125,7 @@ async fn get_org_branding(
 
     let row = sqlx::query(
         r#"
-        select organization_id, app_name, logo_url, icon_url, primary_color, secondary_color, privacy_url, terms_url, updated_at
+        select organization_id, app_name, theme, logo_url, icon_url, primary_color, secondary_color, privacy_url, terms_url, updated_at
         from branding_profiles
         where organization_id = $1
         "#,
@@ -143,6 +146,7 @@ async fn get_org_branding(
         Json(BrandingResponse {
             organization_id: row.get("organization_id"),
             app_name: row.get("app_name"),
+            theme: row.get("theme"),
             logo_url: row.try_get("logo_url").ok(),
             icon_url: row.try_get("icon_url").ok(),
             primary_color: row.try_get("primary_color").ok(),
@@ -158,6 +162,7 @@ async fn get_org_branding(
 #[derive(Debug, Deserialize)]
 struct PatchBrandingRequest {
     app_name: Option<String>,
+    theme: Option<String>,
     logo_url: Option<String>,
     primary_color: Option<String>,
     secondary_color: Option<String>,
@@ -191,6 +196,16 @@ async fn patch_org_branding(
         .app_name
         .map(|s| s.trim().to_string())
         .filter(|s| !s.is_empty());
+    let theme = req
+        .theme
+        .map(|s| s.trim().to_lowercase())
+        .filter(|s| !s.is_empty());
+    if theme
+        .as_deref()
+        .is_some_and(|t| t != "dark" && t != "light")
+    {
+        return util::api_error(ApiErrorCode::ValidationError);
+    }
     let logo_url = clean_opt(req.logo_url);
     let primary_color = clean_opt(req.primary_color);
     let secondary_color = clean_opt(req.secondary_color);
@@ -202,17 +217,19 @@ async fn patch_org_branding(
         update branding_profiles
         set
           app_name = coalesce($2, app_name),
-          logo_url = $3,
-          primary_color = $4,
-          secondary_color = $5,
-          privacy_url = $6,
-          terms_url = $7,
+          theme = coalesce($3, theme),
+          logo_url = $4,
+          primary_color = $5,
+          secondary_color = $6,
+          privacy_url = $7,
+          terms_url = $8,
           updated_at = now()
         where organization_id = $1
         "#,
     )
     .bind(org_id)
     .bind(app_name)
+    .bind(theme)
     .bind(logo_url)
     .bind(primary_color)
     .bind(secondary_color)

@@ -15,6 +15,7 @@ import { createRealtimeClient } from "../realtime/ws";
 import { Input } from "../components/Input";
 import { Button } from "../components/Button";
 import { useAuthStore } from "../state/auth";
+import { useBrandingStore } from "../state/branding";
 
 type SendMessageResponse = Message;
 
@@ -25,6 +26,7 @@ export function ChannelPage() {
   const nav = useNavigate();
   const qc = useQueryClient();
   const me = useAuthStore((s) => s.user);
+  const loadOrgBranding = useBrandingStore((s) => s.loadOrgBranding);
 
   const [text, setText] = useState("");
   const [connected, setConnected] = useState(false);
@@ -38,6 +40,10 @@ export function ChannelPage() {
     queryFn: () => apiFetch<OrgsListResponse>("/orgs"),
   });
   const org = orgs.data?.organizations.find((o) => o.slug === org_slug);
+  useEffect(() => {
+    if (!org?.id) return;
+    loadOrgBranding(org.id).catch(() => {});
+  }, [loadOrgBranding, org?.id]);
 
   const channels = useQuery({
     enabled: !!org?.id,

@@ -57,6 +57,7 @@ export type RolesResponse = { roles: Role[] };
 export type Branding = {
   organization_id: string;
   app_name: string;
+  theme: "dark" | "light";
   logo_url?: string | null;
   icon_url?: string | null;
   primary_color?: string | null;

@@ -20,7 +20,7 @@ type Tab = "branding" | "members" | "audit";
 export function AdminPage() {
   const { org_slug } = useParams();
   const qc = useQueryClient();
-  const reloadPublicBranding = useBrandingStore((s) => s.loadBranding);
+  const loadOrgBranding = useBrandingStore((s) => s.loadOrgBranding);
   const [tab, setTab] = useState<Tab>("branding");
   const [flash, setFlash] = useState<string | null>(null);
 
@@ -66,9 +66,13 @@ export function AdminPage() {
       }),
     onSuccess: async () => {
       await qc.invalidateQueries({ queryKey: ["branding", org?.id] });
-      await reloadPublicBranding(window.location.host);
+      await loadOrgBranding(org!.id);
       setFlash("Branding updated.");
       window.setTimeout(() => setFlash(null), 2500);
+    },
+    onError: (e) => {
+      setFlash((e as Error).message);
+      window.setTimeout(() => setFlash(null), 5000);
     },
   });
 
@@ -197,6 +201,7 @@ function BrandingPanel(props: {
 }) {
   const b = props.branding;
   const [appName, setAppName] = useState(b?.app_name ?? "");
+  const [theme, setTheme] = useState<"dark" | "light">(b?.theme ?? "dark");
   const [logoUrl, setLogoUrl] = useState(b?.logo_url ?? "");
   const [primary, setPrimary] = useState(b?.primary_color ?? "");
   const [secondary, setSecondary] = useState(b?.secondary_color ?? "");
@@ -216,6 +221,7 @@ function BrandingPanel(props: {
           e.preventDefault();
           props.onSave({
             app_name: appName,
+            theme,
             logo_url: logoUrl || null,
             primary_color: primary || null,
             secondary_color: secondary || null,
@@ -224,6 +230,17 @@ function BrandingPanel(props: {
           });
         }}
       >
+        <div>
+          <label className="mb-1 block text-sm text-slate-300">Theme</label>
+          <select
+            className="w-full rounded-md border border-slate-800 bg-slate-900 px-3 py-2 text-sm text-slate-200 outline-none focus:border-indigo-500"
+            value={theme}
+            onChange={(e) => setTheme(e.target.value as any)}
+          >
+            <option value="dark">dark</option>
+            <option value="light">light</option>
+          </select>
+        </div>
         <div className="sm:col-span-2">
           <label className="mb-1 block text-sm text-slate-300">App name</label>
           <Input value={appName} onChange={(e) => setAppName(e.target.value)} />
