@@ -25,7 +25,7 @@ pub async fn is_member(
 ) -> Result<bool, axum::response::Response> {
     let ok = sqlx::query_scalar::<_, i64>(
         r#"
-        select 1
+        select 1::bigint
         from organization_members
         where organization_id = $1 and user_id = $2
         "#,

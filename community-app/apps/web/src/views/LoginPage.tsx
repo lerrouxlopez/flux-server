@@ -27,6 +27,7 @@ export function LoginPage() {
         body: JSON.stringify({ email, password }),
       });
       setTokens(res.access_token, res.refresh_token);
+      await useAuthStore.getState().loadMe();
       nav("/orgs");
     } catch (e) {
       setErr((e as Error).message);

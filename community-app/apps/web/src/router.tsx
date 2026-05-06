@@ -1,5 +1,6 @@
 import { createBrowserRouter, Navigate } from "react-router-dom";
 import { AppShell } from "./components/AppShell";
+import { RequireAuth, RequireGuest } from "./components/AuthGate";
 import { LoginPage } from "./views/LoginPage";
 import { RegisterPage } from "./views/RegisterPage";
 import { OrgsPage } from "./views/OrgsPage";
@@ -13,14 +14,13 @@ export const router = createBrowserRouter([
     element: <AppShell />,
     children: [
       { path: "/", element: <Navigate to="/orgs" replace /> },
-      { path: "/login", element: <LoginPage /> },
-      { path: "/register", element: <RegisterPage /> },
-      { path: "/orgs", element: <OrgsPage /> },
-      { path: "/app/:org_slug", element: <OrgAppPage /> },
-      { path: "/app/:org_slug/channels/:channel_id", element: <ChannelPage /> },
-      { path: "/app/:org_slug/voice/:room_id", element: <VoiceRoomPage /> },
-      { path: "/admin/:org_slug", element: <AdminPage /> },
+      { path: "/login", element: <RequireGuest><LoginPage /></RequireGuest> },
+      { path: "/register", element: <RequireGuest><RegisterPage /></RequireGuest> },
+      { path: "/orgs", element: <RequireAuth><OrgsPage /></RequireAuth> },
+      { path: "/app/:org_slug", element: <RequireAuth><OrgAppPage /></RequireAuth> },
+      { path: "/app/:org_slug/channels/:channel_id", element: <RequireAuth><ChannelPage /></RequireAuth> },
+      { path: "/app/:org_slug/voice/:room_id", element: <RequireAuth><VoiceRoomPage /></RequireAuth> },
+      { path: "/admin/:org_slug", element: <RequireAuth><AdminPage /></RequireAuth> },
     ],
   },
 ]);
-

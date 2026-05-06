@@ -36,7 +36,8 @@ async fn bootstrap_state(pool: PgPool) -> api_server::AppState {
             access_ttl: time::Duration::seconds(cfg.access_token_ttl_seconds as i64),
             refresh_ttl: time::Duration::seconds(cfg.refresh_token_ttl_seconds as i64),
         },
-        cfg.livekit_url.clone(),
+        cfg.livekit_url_internal.clone(),
+        cfg.livekit_url_public.clone(),
         cfg.livekit_api_key.clone(),
         cfg.livekit_api_secret.clone(),
     )

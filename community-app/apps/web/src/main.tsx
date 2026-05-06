@@ -6,6 +6,7 @@ import { ReactQueryDevtools } from "@tanstack/react-query-devtools";
 import "./styles.css";
 import { router } from "./router";
 import { useBrandingStore } from "./state/branding";
+import { useAuthStore } from "./state/auth";
 
 const queryClient = new QueryClient();
 
@@ -17,6 +18,10 @@ async function bootstrap() {
   if (branding?.app_name) {
     document.title = branding.app_name;
   }
+
+  // Restore session if tokens exist.
+  useAuthStore.getState().hydrate();
+  await useAuthStore.getState().loadMe().catch(() => {});
 
   ReactDOM.createRoot(document.getElementById("root")!).render(
     <React.StrictMode>

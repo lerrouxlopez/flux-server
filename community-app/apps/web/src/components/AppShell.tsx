@@ -1,18 +1,25 @@
 import { Outlet, Link } from "react-router-dom";
 import { useBrandingStore } from "../state/branding";
 import { useAuthStore } from "../state/auth";
+import { useEffect } from "react";
 
 export function AppShell() {
   const branding = useBrandingStore((s) => s.branding);
   const user = useAuthStore((s) => s.user);
   const logout = useAuthStore((s) => s.logout);
+  const loadMe = useAuthStore((s) => s.loadMe);
+
+  useEffect(() => {
+    // Keep user populated when reloading pages.
+    loadMe().catch(() => {});
+  }, [loadMe]);
 
   return (
     <div className="min-h-dvh">
       <header className="border-b border-slate-800 bg-slate-950/80 backdrop-blur">
         <div className="mx-auto flex max-w-6xl items-center justify-between px-4 py-3">
           <Link to="/orgs" className="font-semibold tracking-tight">
-            {branding?.app_name ?? "Community"}
+            {branding?.app_name ?? "Flux"}
           </Link>
           <div className="flex items-center gap-3">
             {user ? (
@@ -39,4 +46,3 @@ export function AppShell() {
     </div>
   );
 }
-

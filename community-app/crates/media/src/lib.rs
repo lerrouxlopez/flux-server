@@ -11,7 +11,8 @@ pub const TOKEN_TTL_SECS: u64 = 60 * 60;
 
 #[derive(Debug, Clone)]
 pub struct LiveKitConfig {
-    pub url: String,
+    pub internal_url: String,
+    pub public_url: String,
     pub api_key: String,
     pub api_secret: String,
 }
@@ -173,7 +174,7 @@ pub fn issue_livekit_token(
 
     Ok(TokenResponse {
         token: jwt,
-        livekit_url: cfg.url.clone(),
+        livekit_url: cfg.public_url.clone(),
     })
 }
 
@@ -201,7 +202,7 @@ pub async fn list_participants(
 
     let url = format!(
         "{}/twirp/livekit.RoomService/ListParticipants",
-        cfg.url.trim_end_matches('/')
+        cfg.internal_url.trim_end_matches('/')
     );
 
     let client = reqwest::Client::new();

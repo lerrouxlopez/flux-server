@@ -4,6 +4,7 @@ use sqlx::PgPool;
 use uuid::Uuid;
 
 pub mod app;
+pub mod routes_audit;
 pub mod routes_auth;
 pub mod routes_branding;
 pub mod routes_channels;
@@ -18,7 +19,8 @@ pub struct AppState {
     pub(crate) redis: redis::aio::ConnectionManager,
     pub(crate) nats: async_nats::Client,
     pub(crate) auth_cfg: auth::AuthConfig,
-    pub(crate) livekit_url: String,
+    pub(crate) livekit_url_internal: String,
+    pub(crate) livekit_url_public: String,
     pub(crate) livekit_api_key: String,
     pub(crate) livekit_api_secret: String,
 }
@@ -29,7 +31,8 @@ impl AppState {
         redis: redis::aio::ConnectionManager,
         nats: async_nats::Client,
         auth_cfg: auth::AuthConfig,
-        livekit_url: String,
+        livekit_url_internal: String,
+        livekit_url_public: String,
         livekit_api_key: String,
         livekit_api_secret: String,
     ) -> Self {
@@ -38,7 +41,8 @@ impl AppState {
             redis,
             nats,
             auth_cfg,
-            livekit_url,
+            livekit_url_internal,
+            livekit_url_public,
             livekit_api_key,
             livekit_api_secret,
         }
@@ -54,7 +58,7 @@ pub async fn readyz(State(state): State<AppState>) -> impl IntoResponse {
     let mut problems: Vec<&'static str> = Vec::new();
 
     // Postgres
-    if sqlx::query_scalar::<_, i64>("select 1")
+    if sqlx::query_scalar::<_, i64>("select 1::bigint")
         .fetch_one(&state.pool)
         .await
         .is_err()

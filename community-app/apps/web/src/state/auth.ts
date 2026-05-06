@@ -15,6 +15,7 @@ type AuthState = {
   clear: () => void;
   logout: () => Promise<void>;
   hydrate: () => void;
+  loadMe: () => Promise<void>;
 };
 
 const LS_ACCESS = "access_token";
@@ -51,5 +52,21 @@ export const useAuthStore = create<AuthState>((set, get) => ({
       refreshToken: localStorage.getItem(LS_REFRESH),
     });
   },
+  loadMe: async () => {
+    const accessToken = get().accessToken ?? localStorage.getItem(LS_ACCESS);
+    if (!accessToken) {
+      set({ user: null });
+      return;
+    }
+    const res = await fetch("/auth/me", {
+      headers: { Authorization: `Bearer ${accessToken}` },
+    });
+    if (!res.ok) {
+      // Token is stale/invalid.
+      get().clear();
+      return;
+    }
+    const user = (await res.json()) as User;
+    set({ user });
+  },
 }));
-

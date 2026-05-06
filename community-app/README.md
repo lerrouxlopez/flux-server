@@ -1,4 +1,4 @@
-# community-app
+# Flux
 
 Centralized, multi-tenant collaboration platform (Discord/Slack/Zoom-style).
 
@@ -10,15 +10,10 @@ Centralized, multi-tenant collaboration platform (Discord/Slack/Zoom-style).
 - LiveKit (voice/video/screen share; backend issues tokens)
 
 ## Dev quickstart (WSL / Docker)
-1. Start dependencies:
-   - `docker compose up -d`
-2. Run API server:
-   - `cp .env.example .env`
-   - `cargo run -p api-server`
-3. Run realtime gateway (WebSocket):
-   - `cargo run -p realtime-gateway`
-4. Run worker:
-   - `cargo run -p worker`
+1. Start the full stack (deps + backend + web UI):
+   - `docker compose up -d --build`
+2. Open the web app:
+   - `http://localhost:5173`
 
 Health checks:
 - API: `curl http://localhost:8080/healthz`

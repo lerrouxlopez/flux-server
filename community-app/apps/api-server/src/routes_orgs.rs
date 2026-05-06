@@ -22,9 +22,15 @@ use tracing::Span;
 pub fn router() -> Router<AppState> {
     Router::new()
         .route("/", post(create_org).get(list_orgs))
+        .route("/join", post(join_org_by_invite))
         .route("/{org_id}", get(get_org))
         .route("/{org_id}/members", get(list_members).post(add_member))
+        .route(
+            "/{org_id}/members/{user_id}",
+            axum::routing::patch(update_member_role),
+        )
         .route("/{org_id}/invites", post(create_invite))
+        .route("/{org_id}/roles", get(list_roles))
 }
 
 #[derive(Debug, Deserialize)]
@@ -49,6 +55,8 @@ struct OrgsListResponse {
 #[derive(Debug, Serialize)]
 struct MemberResponse {
     user_id: Uuid,
+    email: String,
+    display_name: String,
     role: String,
     joined_at: OffsetDateTime,
 }
@@ -56,6 +64,19 @@ struct MemberResponse {
 #[derive(Debug, Serialize)]
 struct MembersResponse {
     members: Vec<MemberResponse>,
+}
+
+#[derive(Debug, Serialize)]
+struct RoleResponse {
+    id: Uuid,
+    name: String,
+    permissions: i64,
+    created_at: OffsetDateTime,
+}
+
+#[derive(Debug, Serialize)]
+struct RolesResponse {
+    roles: Vec<RoleResponse>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -76,6 +97,13 @@ struct InviteResponse {
 struct AddMemberRequest {
     user_id: Option<Uuid>,
     invite_code: Option<String>,
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(rename_all = "snake_case")]
+struct JoinOrgRequest {
+    slug: String,
+    invite_code: String,
 }
 
 async fn create_org(
@@ -303,10 +331,11 @@ async fn get_org(
     Path(org_id): Path<Uuid>,
 ) -> impl IntoResponse {
     Span::current().record("organization_id", tracing::field::display(org_id));
-    if !util::is_member(&state.pool, org_id, auth.user_id)
-        .await
-        .unwrap_or(false)
-    {
+    let is_member = match util::is_member(&state.pool, org_id, auth.user_id).await {
+        Ok(v) => v,
+        Err(e) => return e,
+    };
+    if !is_member {
         return util::api_error(ApiErrorCode::PermissionDenied);
     }
 
@@ -346,18 +375,20 @@ async fn list_members(
     Path(org_id): Path<Uuid>,
 ) -> impl IntoResponse {
     Span::current().record("organization_id", tracing::field::display(org_id));
-    if !util::is_member(&state.pool, org_id, auth.user_id)
-        .await
-        .unwrap_or(false)
-    {
+    let is_member = match util::is_member(&state.pool, org_id, auth.user_id).await {
+        Ok(v) => v,
+        Err(e) => return e,
+    };
+    if !is_member {
         return util::api_error(ApiErrorCode::PermissionDenied);
     }
 
     let rows = sqlx::query(
         r#"
-        select user_id, role, joined_at
-        from organization_members
-        where organization_id = $1
+        select m.user_id, u.email, u.display_name, m.role, m.joined_at
+        from organization_members m
+        join users u on u.id = m.user_id
+        where m.organization_id = $1
         order by joined_at asc
         "#,
     )
@@ -374,12 +405,292 @@ async fn list_members(
         .into_iter()
         .map(|r| MemberResponse {
             user_id: r.get("user_id"),
+            email: r.get("email"),
+            display_name: r.get("display_name"),
             role: r.get("role"),
             joined_at: r.get("joined_at"),
         })
         .collect();
 
     (StatusCode::OK, Json(MembersResponse { members })).into_response()
+}
+
+async fn join_org_by_invite(
+    State(state): State<AppState>,
+    Extension(auth): Extension<AuthContext>,
+    Json(req): Json<JoinOrgRequest>,
+) -> impl IntoResponse {
+    let slug = req.slug.trim().to_lowercase();
+    let code = req.invite_code.trim().to_string();
+    if slug.is_empty() || code.is_empty() {
+        return util::api_error(ApiErrorCode::ValidationError);
+    }
+
+    let org_id = sqlx::query_scalar::<_, Uuid>(
+        r#"
+        select id
+        from organizations
+        where slug = $1
+        "#,
+    )
+    .bind(&slug)
+    .fetch_optional(&state.pool)
+    .await;
+
+    let Some(org_id) = (match org_id {
+        Ok(r) => r,
+        Err(_) => return util::api_error(ApiErrorCode::InternalError),
+    }) else {
+        return util::api_error(ApiErrorCode::NotFound);
+    };
+
+    Span::current().record("organization_id", tracing::field::display(org_id));
+
+    // Join via invite_code (same logic as add_member's invite flow).
+    let now = OffsetDateTime::now_utc();
+    let mut tx = match state.pool.begin().await {
+        Ok(tx) => tx,
+        Err(_) => return util::api_error(ApiErrorCode::InternalError),
+    };
+
+    let invite = sqlx::query(
+        r#"
+        select id, expires_at, max_uses, use_count
+        from organization_invites
+        where organization_id = $1 and code = $2
+        "#,
+    )
+    .bind(org_id)
+    .bind(code)
+    .fetch_optional(&mut *tx)
+    .await;
+
+    let Some(invite) = (match invite {
+        Ok(r) => r,
+        Err(_) => return util::api_error(ApiErrorCode::InternalError),
+    }) else {
+        return util::api_error(ApiErrorCode::NotFound);
+    };
+
+    let invite_id: Uuid = invite.get("id");
+    let expires_at: Option<OffsetDateTime> = invite.get("expires_at");
+    let max_uses: Option<i32> = invite.get("max_uses");
+    let use_count: i32 = invite.get("use_count");
+
+    if expires_at.is_some_and(|e| e <= now) {
+        return util::api_error(ApiErrorCode::ValidationError);
+    }
+    if max_uses.is_some_and(|m| use_count >= m) {
+        return util::api_error(ApiErrorCode::ValidationError);
+    }
+
+    let member_insert = sqlx::query(
+        r#"
+        insert into organization_members (organization_id, user_id, role, joined_at)
+        values ($1, $2, 'member', $3)
+        on conflict do nothing
+        "#,
+    )
+    .bind(org_id)
+    .bind(auth.user_id)
+    .bind(now)
+    .execute(&mut *tx)
+    .await;
+    if member_insert.is_err() {
+        return util::api_error(ApiErrorCode::InternalError);
+    }
+
+    let bump = sqlx::query(
+        r#"
+        update organization_invites
+        set use_count = use_count + 1
+        where id = $1
+        "#,
+    )
+    .bind(invite_id)
+    .execute(&mut *tx)
+    .await;
+    if bump.is_err() {
+        return util::api_error(ApiErrorCode::InternalError);
+    }
+
+    if tx.commit().await.is_err() {
+        return util::api_error(ApiErrorCode::InternalError);
+    }
+
+    util::write_audit_log(
+        &state.pool,
+        org_id,
+        Some(auth.user_id),
+        "org.member.joined_by_invite",
+        Some("invite"),
+        Some(invite_id),
+        serde_json::json!({}),
+    )
+    .await;
+
+    (
+        StatusCode::OK,
+        Json(serde_json::json!({"status":"ok","organization_id": org_id, "slug": slug})),
+    )
+        .into_response()
+}
+
+#[derive(Debug, serde::Deserialize)]
+struct UpdateMemberRoleRequest {
+    role: String,
+}
+
+async fn update_member_role(
+    State(state): State<AppState>,
+    Extension(auth): Extension<AuthContext>,
+    Path((org_id, user_id)): Path<(Uuid, Uuid)>,
+    Json(req): Json<UpdateMemberRoleRequest>,
+) -> impl IntoResponse {
+    Span::current().record("organization_id", tracing::field::display(org_id));
+
+    let ok = match util::can(
+        &state.pool,
+        auth.user_id,
+        org_id,
+        permissions::Permission::OrgManageMembers,
+    )
+    .await
+    {
+        Ok(v) => v,
+        Err(e) => return e,
+    };
+    if !ok {
+        return util::api_error(ApiErrorCode::PermissionDenied);
+    }
+
+    let role = req.role.trim().to_lowercase();
+    if role.is_empty() {
+        return util::api_error(ApiErrorCode::ValidationError);
+    }
+    // Ownership transfer is intentionally not supported in MVP role management.
+    if role == "owner" {
+        return util::api_error(ApiErrorCode::ValidationError);
+    }
+
+    // Ensure target exists and is in this org; disallow changing owners.
+    let current_role = sqlx::query_scalar::<_, String>(
+        r#"
+        select role
+        from organization_members
+        where organization_id = $1 and user_id = $2
+        "#,
+    )
+    .bind(org_id)
+    .bind(user_id)
+    .fetch_optional(&state.pool)
+    .await;
+
+    let Some(current_role) = (match current_role {
+        Ok(r) => r,
+        Err(_) => return util::api_error(ApiErrorCode::InternalError),
+    }) else {
+        return util::api_error(ApiErrorCode::NotFound);
+    };
+
+    if current_role == "owner" {
+        return util::api_error(ApiErrorCode::PermissionDenied);
+    }
+
+    // Role must exist in this org.
+    let exists = sqlx::query_scalar::<_, i64>(
+        r#"
+        select 1::bigint
+        from roles
+        where organization_id = $1 and name = $2
+        "#,
+    )
+    .bind(org_id)
+    .bind(&role)
+    .fetch_optional(&state.pool)
+    .await;
+
+    if (match exists {
+        Ok(v) => v,
+        Err(_) => return util::api_error(ApiErrorCode::InternalError),
+    })
+    .is_none()
+    {
+        return util::api_error(ApiErrorCode::ValidationError);
+    }
+
+    let updated = sqlx::query(
+        r#"
+        update organization_members
+        set role = $3
+        where organization_id = $1 and user_id = $2
+        "#,
+    )
+    .bind(org_id)
+    .bind(user_id)
+    .bind(&role)
+    .execute(&state.pool)
+    .await;
+
+    match updated {
+        Ok(r) if r.rows_affected() == 0 => util::api_error(ApiErrorCode::NotFound),
+        Ok(_) => {
+            util::write_audit_log(
+                &state.pool,
+                org_id,
+                Some(auth.user_id),
+                "org.member.role_updated",
+                Some("user"),
+                Some(user_id),
+                serde_json::json!({ "role": role }),
+            )
+            .await;
+            (StatusCode::OK, Json(serde_json::json!({ "status": "ok" }))).into_response()
+        }
+        Err(_) => util::api_error(ApiErrorCode::InternalError),
+    }
+}
+
+async fn list_roles(
+    State(state): State<AppState>,
+    Extension(auth): Extension<AuthContext>,
+    Path(org_id): Path<Uuid>,
+) -> impl IntoResponse {
+    Span::current().record("organization_id", tracing::field::display(org_id));
+    // Must be org member to read.
+    let _perms = match util::member_perms(&state.pool, org_id, auth.user_id).await {
+        Ok(p) => p,
+        Err(e) => return e,
+    };
+
+    let rows = sqlx::query(
+        r#"
+        select id, name, permissions, created_at
+        from roles
+        where organization_id = $1
+        order by created_at asc
+        "#,
+    )
+    .bind(org_id)
+    .fetch_all(&state.pool)
+    .await;
+
+    let rows = match rows {
+        Ok(r) => r,
+        Err(_) => return util::api_error(ApiErrorCode::InternalError),
+    };
+
+    let roles = rows
+        .into_iter()
+        .map(|r| RoleResponse {
+            id: r.get("id"),
+            name: r.get("name"),
+            permissions: r.get("permissions"),
+            created_at: r.get("created_at"),
+        })
+        .collect();
+
+    (StatusCode::OK, Json(RolesResponse { roles })).into_response()
 }
 
 async fn create_invite(

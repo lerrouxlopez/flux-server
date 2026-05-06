@@ -30,5 +30,92 @@ services:
       - "7881:7881"
       - "7882:7882/udp"
 
+  api-server:
+    build:
+      context: .
+      dockerfile: Dockerfile.api-server
+    depends_on:
+      - postgres
+      - redis
+      - nats
+      - livekit
+    environment:
+      APP_ENV: local
+      HTTP_ADDR: 0.0.0.0:8080
+      WS_ADDR: 0.0.0.0:8081
+      DATABASE_URL: postgres://app:app@postgres:5432/community_app
+      REDIS_URL: redis://redis:6379
+      NATS_URL: nats://nats:4222
+      JWT_ACCESS_SECRET: dev-access-secret-change-me
+      JWT_REFRESH_SECRET: dev-refresh-secret-change-me
+      ACCESS_TOKEN_TTL_SECONDS: 900
+      REFRESH_TOKEN_TTL_SECONDS: 2592000
+      LIVEKIT_URL_INTERNAL: http://livekit:7880
+      LIVEKIT_URL_PUBLIC: http://localhost:7880
+      LIVEKIT_API_KEY: devkey
+      LIVEKIT_API_SECRET: secret
+    ports:
+      - "8080:8080"
+
+  realtime-gateway:
+    build:
+      context: .
+      dockerfile: Dockerfile.realtime-gateway
+    depends_on:
+      - postgres
+      - redis
+      - nats
+    environment:
+      APP_ENV: local
+      WS_ADDR: 0.0.0.0:8081
+      DATABASE_URL: postgres://app:app@postgres:5432/community_app
+      REDIS_URL: redis://redis:6379
+      NATS_URL: nats://nats:4222
+      JWT_ACCESS_SECRET: dev-access-secret-change-me
+      JWT_REFRESH_SECRET: dev-refresh-secret-change-me
+      ACCESS_TOKEN_TTL_SECONDS: 900
+      REFRESH_TOKEN_TTL_SECONDS: 2592000
+      LIVEKIT_URL_INTERNAL: http://livekit:7880
+      LIVEKIT_URL_PUBLIC: http://localhost:7880
+      LIVEKIT_API_KEY: devkey
+      LIVEKIT_API_SECRET: secret
+    ports:
+      - "8081:8081"
+
+  worker:
+    build:
+      context: .
+      dockerfile: Dockerfile.worker
+    depends_on:
+      - postgres
+      - redis
+      - nats
+    environment:
+      APP_ENV: local
+      DATABASE_URL: postgres://app:app@postgres:5432/community_app
+      REDIS_URL: redis://redis:6379
+      NATS_URL: nats://nats:4222
+      JWT_ACCESS_SECRET: dev-access-secret-change-me
+      JWT_REFRESH_SECRET: dev-refresh-secret-change-me
+      ACCESS_TOKEN_TTL_SECONDS: 900
+      REFRESH_TOKEN_TTL_SECONDS: 2592000
+      LIVEKIT_URL_INTERNAL: http://livekit:7880
+      LIVEKIT_URL_PUBLIC: http://localhost:7880
+      LIVEKIT_API_KEY: devkey
+      LIVEKIT_API_SECRET: secret
+
+  web:
+    build:
+      context: .
+      dockerfile: Dockerfile.web
+    depends_on:
+      - api-server
+      - realtime-gateway
+    environment:
+      VITE_API_TARGET: http://api-server:8080
+      VITE_REALTIME_TARGET: http://realtime-gateway:8081
+    ports:
+      - "5173:5173"
+
 volumes:
   postgres_data:

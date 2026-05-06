@@ -6,17 +6,16 @@ export default defineConfig({
   server: {
     port: 5173,
     proxy: {
-      "/auth": "http://localhost:8080",
-      "/orgs": "http://localhost:8080",
-      "/channels": "http://localhost:8080",
-      "/messages": "http://localhost:8080",
-      "/media": "http://localhost:8080",
-      "/public": "http://localhost:8080",
+      "/auth": process.env.VITE_API_TARGET ?? "http://localhost:8080",
+      "/orgs": process.env.VITE_API_TARGET ?? "http://localhost:8080",
+      "/channels": process.env.VITE_API_TARGET ?? "http://localhost:8080",
+      "/messages": process.env.VITE_API_TARGET ?? "http://localhost:8080",
+      "/media": process.env.VITE_API_TARGET ?? "http://localhost:8080",
+      "/public": process.env.VITE_API_TARGET ?? "http://localhost:8080",
       "/realtime": {
-        target: "http://localhost:8081",
+        target: process.env.VITE_REALTIME_TARGET ?? "http://localhost:8081",
         ws: true,
       },
     },
   },
 });
-

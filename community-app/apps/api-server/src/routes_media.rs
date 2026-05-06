@@ -187,7 +187,8 @@ async fn issue_token(
 
     let resp = match media::issue_livekit_token(
         &media::LiveKitConfig {
-            url: state.livekit_url.clone(),
+            internal_url: state.livekit_url_internal.clone(),
+            public_url: state.livekit_url_public.clone(),
             api_key: state.livekit_api_key.clone(),
             api_secret: state.livekit_api_secret.clone(),
         },
@@ -228,7 +229,8 @@ async fn list_participants(
 
     let v = match media::list_participants(
         &media::LiveKitConfig {
-            url: state.livekit_url.clone(),
+            internal_url: state.livekit_url_internal.clone(),
+            public_url: state.livekit_url_public.clone(),
             api_key: state.livekit_api_key.clone(),
             api_secret: state.livekit_api_secret.clone(),
         },
