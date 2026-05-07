@@ -50,7 +50,17 @@ struct ListMessagesResponse {
 
 #[derive(Debug, Deserialize)]
 struct SendMessageRequest {
-    body: String,
+    #[serde(default)]
+    body: Option<String>,
+    #[serde(default)]
+    attachments: Option<Vec<SendAttachmentRequest>>,
+}
+
+#[derive(Debug, Deserialize)]
+struct SendAttachmentRequest {
+    filename: String,
+    content_type: Option<String>,
+    data_url: String,
 }
 
 #[derive(Debug, Deserialize)]
@@ -66,9 +76,28 @@ struct MessageResponse {
     sender_id: Uuid,
     body: Option<String>,
     kind: String,
+    attachments: Vec<AttachmentResponse>,
+    reactions: Vec<ReactionSummary>,
     created_at: OffsetDateTime,
     edited_at: Option<OffsetDateTime>,
     deleted_at: Option<OffsetDateTime>,
+}
+
+#[derive(Debug, Serialize, Clone)]
+struct AttachmentResponse {
+    id: Uuid,
+    filename: String,
+    content_type: Option<String>,
+    size_bytes: i64,
+    data_url: String,
+    created_at: OffsetDateTime,
+}
+
+#[derive(Debug, Serialize, Clone)]
+struct ReactionSummary {
+    emoji: String,
+    count: i64,
+    reacted_by_me: bool,
 }
 
 #[derive(Debug, Deserialize)]
@@ -144,15 +173,27 @@ async fn list_messages(
         Err(_) => return util::api_error(ApiErrorCode::InternalError),
     };
 
+    let message_ids: Vec<Uuid> = rows.iter().map(|r| r.get("id")).collect();
+
+    let attachments_by_message = fetch_attachments_by_message(&state.pool, &message_ids).await;
+    let reactions_by_message =
+        fetch_reactions_by_message(&state.pool, &message_ids, auth.user_id).await;
+
     let mut messages: Vec<MessageResponse> = Vec::with_capacity(rows.len());
     for r in rows.iter() {
+        let id: Uuid = r.get("id");
         messages.push(MessageResponse {
-            id: r.get("id"),
+            id,
             organization_id: r.get("organization_id"),
             channel_id: r.get("channel_id"),
             sender_id: r.get("sender_id"),
             body: r.get("body"),
             kind: r.get("kind"),
+            attachments: attachments_by_message
+                .get(&id)
+                .cloned()
+                .unwrap_or_default(),
+            reactions: reactions_by_message.get(&id).cloned().unwrap_or_default(),
             created_at: r.get("created_at"),
             edited_at: r.get("edited_at"),
             deleted_at: r.get("deleted_at"),
@@ -191,11 +232,17 @@ async fn send_message(
         return util::api_error(ApiErrorCode::RateLimited);
     }
 
-    let body = req.body.trim().to_string();
-    if body.is_empty() {
+    let body = req.body.map(|b| b.trim().to_string()).filter(|b| !b.is_empty());
+    if body.as_ref().is_some_and(|b| b.len() > 2000) {
         return util::api_error(ApiErrorCode::ValidationError);
     }
-    if body.len() > 2000 {
+
+    let attachments_in = req.attachments.unwrap_or_default();
+    if attachments_in.len() > 3 {
+        return util::api_error(ApiErrorCode::ValidationError);
+    }
+
+    if body.is_none() && attachments_in.is_empty() {
         return util::api_error(ApiErrorCode::ValidationError);
     }
 
@@ -231,10 +278,16 @@ async fn send_message(
         Err(_) => return util::api_error(ApiErrorCode::InternalError),
     };
 
+    let kind = if attachments_in.is_empty() {
+        "text"
+    } else {
+        "attachment"
+    };
+
     let inserted = sqlx::query(
         r#"
         insert into messages (id, organization_id, channel_id, sender_id, body, kind, created_at)
-        values ($1, $2, $3, $4, $5, 'text', $6)
+        values ($1, $2, $3, $4, $5, $6, $7)
         "#,
     )
     .bind(message_id)
@@ -242,12 +295,68 @@ async fn send_message(
     .bind(channel_id)
     .bind(auth.user_id)
     .bind(body.clone())
+    .bind(kind)
     .bind(now)
     .execute(&mut *tx)
     .await;
 
     if inserted.is_err() {
         return util::api_error(ApiErrorCode::InternalError);
+    }
+
+    let mut inserted_attachments: Vec<AttachmentResponse> = Vec::new();
+    for a in attachments_in.iter() {
+        let filename = a.filename.trim().to_string();
+        let data_url = a.data_url.trim().to_string();
+        if filename.is_empty() || data_url.is_empty() {
+            return util::api_error(ApiErrorCode::ValidationError);
+        }
+        if !data_url.starts_with("data:") {
+            return util::api_error(ApiErrorCode::ValidationError);
+        }
+        if data_url.len() > 2_000_000 {
+            return util::api_error(ApiErrorCode::ValidationError);
+        }
+        let id = Uuid::now_v7();
+        let content_type = a
+            .content_type
+            .as_ref()
+            .map(|v| v.trim().to_string())
+            .filter(|v| !v.is_empty());
+        let size_bytes = data_url.len() as i64;
+
+        let res = sqlx::query(
+            r#"
+            insert into message_attachments
+              (id, organization_id, message_id, uploader_id, filename, content_type, size_bytes, storage_path, created_at)
+            values
+              ($1, $2, $3, $4, $5, $6, $7, $8, $9)
+            "#,
+        )
+        .bind(id)
+        .bind(org_id)
+        .bind(message_id)
+        .bind(auth.user_id)
+        .bind(filename.clone())
+        .bind(content_type.clone())
+        .bind(size_bytes)
+        .bind(data_url.clone())
+        .bind(now)
+        .execute(&mut *tx)
+        .await;
+
+        if res.is_err() {
+            return util::api_error(ApiErrorCode::InternalError);
+        }
+
+        inserted_attachments.push(AttachmentResponse {
+            id,
+            filename,
+            content_type,
+            size_bytes,
+            data_url,
+            created_at: now,
+        });
     }
 
     if tx.commit().await.is_err() {
@@ -281,14 +390,99 @@ async fn send_message(
             organization_id: org_id,
             channel_id,
             sender_id: auth.user_id,
-            body: Some(body),
-            kind: "text".to_string(),
+            body,
+            kind: kind.to_string(),
+            attachments: inserted_attachments,
+            reactions: Vec::new(),
             created_at: now,
             edited_at: None,
             deleted_at: None,
         }),
     )
         .into_response()
+}
+
+async fn fetch_attachments_by_message(
+    pool: &PgPool,
+    message_ids: &[Uuid],
+) -> std::collections::HashMap<Uuid, Vec<AttachmentResponse>> {
+    use std::collections::HashMap;
+    if message_ids.is_empty() {
+        return HashMap::new();
+    }
+
+    let rows = sqlx::query(
+        r#"
+        select id, message_id, filename, content_type, size_bytes, storage_path, created_at
+        from message_attachments
+        where message_id = any($1)
+        order by created_at asc
+        "#,
+    )
+    .bind(message_ids)
+    .fetch_all(pool)
+    .await;
+
+    let rows = match rows {
+        Ok(r) => r,
+        Err(_) => return HashMap::new(),
+    };
+
+    let mut map: HashMap<Uuid, Vec<AttachmentResponse>> = HashMap::new();
+    for r in rows.iter() {
+        let msg_id: Uuid = r.get("message_id");
+        map.entry(msg_id).or_default().push(AttachmentResponse {
+            id: r.get("id"),
+            filename: r.get("filename"),
+            content_type: r.get("content_type"),
+            size_bytes: r.get("size_bytes"),
+            data_url: r.get("storage_path"),
+            created_at: r.get("created_at"),
+        });
+    }
+    map
+}
+
+async fn fetch_reactions_by_message(
+    pool: &PgPool,
+    message_ids: &[Uuid],
+    me: Uuid,
+) -> std::collections::HashMap<Uuid, Vec<ReactionSummary>> {
+    use std::collections::HashMap;
+    if message_ids.is_empty() {
+        return HashMap::new();
+    }
+
+    let rows = sqlx::query(
+        r#"
+        select message_id, emoji, count(*)::bigint as cnt,
+               bool_or(user_id = $2) as reacted_by_me
+        from message_reactions
+        where message_id = any($1)
+        group by message_id, emoji
+        order by emoji asc
+        "#,
+    )
+    .bind(message_ids)
+    .bind(me)
+    .fetch_all(pool)
+    .await;
+
+    let rows = match rows {
+        Ok(r) => r,
+        Err(_) => return HashMap::new(),
+    };
+
+    let mut map: HashMap<Uuid, Vec<ReactionSummary>> = HashMap::new();
+    for r in rows.iter() {
+        let msg_id: Uuid = r.get("message_id");
+        map.entry(msg_id).or_default().push(ReactionSummary {
+            emoji: r.get("emoji"),
+            count: r.get("cnt"),
+            reacted_by_me: r.get("reacted_by_me"),
+        });
+    }
+    map
 }
 
 async fn edit_message(

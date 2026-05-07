@@ -21,7 +21,8 @@ pub fn router() -> Router<AppState> {
         .route("/login", post(login))
         .route("/refresh", post(refresh))
         .route("/logout", post(logout))
-        .route("/me", get(me))
+        .route("/me", get(me).patch(update_me))
+        .route("/me/avatar", post(set_avatar))
 }
 
 #[derive(Debug, Deserialize)]
@@ -52,8 +53,23 @@ pub struct AuthResponse {
 pub struct MeResponse {
     pub id: Uuid,
     pub email: String,
+    pub name: Option<String>,
     pub display_name: String,
+    pub avatar_url: Option<String>,
     pub created_at: OffsetDateTime,
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub struct UpdateMeRequest {
+    pub name: Option<String>,
+    pub display_name: Option<String>,
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub struct SetAvatarRequest {
+    pub data_url: String,
 }
 
 async fn register(
@@ -278,7 +294,7 @@ async fn me(
 
     let user = sqlx::query(
         r#"
-        select id, email, display_name, created_at
+        select id, email, name, display_name, avatar_url, created_at
         from users
         where id = $1
         "#,
@@ -299,11 +315,90 @@ async fn me(
         Json(MeResponse {
             id: user.get("id"),
             email: user.get("email"),
+            name: user.get("name"),
             display_name: user.get("display_name"),
+            avatar_url: user.get("avatar_url"),
             created_at: user.get("created_at"),
         }),
     )
         .into_response()
+}
+
+async fn update_me(
+    State(state): State<AppState>,
+    auth: Option<axum::Extension<AuthContext>>,
+    Json(req): Json<UpdateMeRequest>,
+) -> impl IntoResponse {
+    let Some(axum::Extension(auth)) = auth else {
+        return util::api_error(ApiErrorCode::Unauthenticated);
+    };
+
+    let name = req.name.map(|v| v.trim().to_string()).filter(|v| !v.is_empty());
+    let display_name = req
+        .display_name
+        .map(|v| v.trim().to_string())
+        .filter(|v| !v.is_empty());
+
+    if name.is_none() && display_name.is_none() {
+        return util::api_error(ApiErrorCode::ValidationError);
+    }
+
+    let res = sqlx::query(
+        r#"
+        update users
+        set
+          name = coalesce($2, name),
+          display_name = coalesce($3, display_name)
+        where id = $1
+        "#,
+    )
+    .bind(auth.user_id)
+    .bind(name)
+    .bind(display_name)
+    .execute(&state.pool)
+    .await;
+
+    match res {
+        Ok(r) if r.rows_affected() == 1 => (StatusCode::OK, Json(serde_json::json!({"status":"ok"}))).into_response(),
+        Ok(_) => util::api_error(ApiErrorCode::NotFound),
+        Err(_) => util::api_error(ApiErrorCode::InternalError),
+    }
+}
+
+async fn set_avatar(
+    State(state): State<AppState>,
+    auth: Option<axum::Extension<AuthContext>>,
+    Json(req): Json<SetAvatarRequest>,
+) -> impl IntoResponse {
+    let Some(axum::Extension(auth)) = auth else {
+        return util::api_error(ApiErrorCode::Unauthenticated);
+    };
+
+    let data_url = req.data_url.trim();
+    if data_url.is_empty() {
+        return util::api_error(ApiErrorCode::ValidationError);
+    }
+
+    // Store as a data URL for now. Enforce basic safety bounds.
+    if !data_url.starts_with("data:image/") {
+        return util::api_error(ApiErrorCode::ValidationError);
+    }
+    // Data URLs are base64-encoded; allow up to ~1MB raw bytes (~1.4MB base64 + header).
+    if data_url.len() > 1_600_000 {
+        return util::api_error_msg(ApiErrorCode::ValidationError, "Avatar too large.");
+    }
+
+    let res = sqlx::query(r#"update users set avatar_url = $2 where id = $1"#)
+        .bind(auth.user_id)
+        .bind(data_url)
+        .execute(&state.pool)
+        .await;
+
+    match res {
+        Ok(r) if r.rows_affected() == 1 => (StatusCode::OK, Json(serde_json::json!({"status":"ok"}))).into_response(),
+        Ok(_) => util::api_error(ApiErrorCode::NotFound),
+        Err(_) => util::api_error(ApiErrorCode::InternalError),
+    }
 }
 
 async fn issue_tokens(

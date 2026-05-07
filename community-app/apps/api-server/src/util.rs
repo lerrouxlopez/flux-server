@@ -91,7 +91,7 @@ pub async fn can_access_channel(
 ) -> Result<bool, axum::response::Response> {
     let row = sqlx::query(
         r#"
-        select organization_id
+        select organization_id, kind
         from channels
         where id = $1
         "#,
@@ -106,8 +106,30 @@ pub async fn can_access_channel(
     };
 
     let org_id: Uuid = row.get("organization_id");
+    let kind: String = row.get("kind");
     let perms = member_perms(pool, org_id, user_id).await?;
-    Ok(permissions::has(perms, perms::CHANNELS_VIEW))
+    if !permissions::has(perms, perms::CHANNELS_VIEW) {
+        return Ok(false);
+    }
+
+    if kind != "dm" {
+        return Ok(true);
+    }
+
+    let ok = sqlx::query_scalar::<_, i64>(
+        r#"
+        select 1::bigint
+        from dm_channel_members
+        where channel_id = $1 and user_id = $2
+        "#,
+    )
+    .bind(channel_id)
+    .bind(user_id)
+    .fetch_optional(pool)
+    .await
+    .map_err(|_| api_error(ApiErrorCode::InternalError))?
+    .is_some();
+    Ok(ok)
 }
 
 pub async fn write_audit_log(

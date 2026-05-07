@@ -4,7 +4,10 @@ import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { apiFetch } from "../api/client";
 import type {
   ChannelsResponse,
+  Channel,
   ListMessagesResponse,
+  MessageAttachment,
+  MessageReaction,
   MediaRoom,
   Member,
   MembersResponse,
@@ -16,6 +19,8 @@ import { Input } from "../components/Input";
 import { Button } from "../components/Button";
 import { useAuthStore } from "../state/auth";
 import { useBrandingStore } from "../state/branding";
+import { OrgSidebar } from "../components/OrgSidebar";
+import { Avatar } from "../components/Avatar";
 
 type SendMessageResponse = Message;
 
@@ -30,8 +35,13 @@ export function ChannelPage() {
 
   const [text, setText] = useState("");
   const [connected, setConnected] = useState(false);
+  const [emojiOpen, setEmojiOpen] = useState(false);
+  const [pendingAttachments, setPendingAttachments] = useState<
+    { filename: string; content_type?: string; data_url: string }[]
+  >([]);
 
   const typingTimeout = useRef<number | null>(null);
+  const fileInputRef = useRef<HTMLInputElement | null>(null);
   const [typingByUser, setTypingByUser] = useState<Record<string, number>>({});
   const [presenceByUser, setPresenceByUser] = useState<Record<string, PresenceStatus>>({});
 
@@ -50,7 +60,16 @@ export function ChannelPage() {
     queryKey: ["channels", org?.id],
     queryFn: () => apiFetch<ChannelsResponse>(`/orgs/${org!.id}/channels`),
   });
-  const channel = channels.data?.channels.find((c) => c.id === channel_id);
+  const channelFromList = channels.data?.channels.find((c) => c.id === channel_id);
+
+  const channelInfo = useQuery({
+    enabled: !!channel_id,
+    queryKey: ["channel", channel_id],
+    queryFn: () => apiFetch<Channel>(`/channels/${channel_id}`),
+    staleTime: 10_000,
+  });
+
+  const channel = channelFromList ?? channelInfo.data ?? null;
 
   const members = useQuery({
     enabled: !!org?.id,
@@ -59,11 +78,15 @@ export function ChannelPage() {
     staleTime: 10_000,
   });
 
+  const myRole = members.data?.members.find((m) => m.user_id === me?.id)?.role ?? null;
+  const canSeeAdmin = myRole === "owner" || myRole === "admin";
+
   const memberById = useMemo(() => {
     const map = new Map<string, Member>();
     for (const m of members.data?.members ?? []) map.set(m.user_id, m);
     return map;
   }, [members.data]);
+
 
   const messages = useQuery({
     enabled: !!channel_id,
@@ -161,12 +184,12 @@ export function ChannelPage() {
   }, [messages.data?.messages?.length]);
 
   const send = useMutation({
-    mutationFn: async (body: string) =>
+    mutationFn: async (input: { body?: string; attachments?: { filename: string; content_type?: string; data_url: string }[] }) =>
       apiFetch<SendMessageResponse>(`/channels/${channel_id}/messages`, {
         method: "POST",
-        body: JSON.stringify({ body }),
+        body: JSON.stringify(input),
       }),
-    onMutate: async (body) => {
+    onMutate: async (input) => {
       await qc.cancelQueries({ queryKey: ["messages", channel_id] });
       const prev = qc.getQueryData<ListMessagesResponse>(["messages", channel_id]);
       const optimistic: Message = {
@@ -174,8 +197,17 @@ export function ChannelPage() {
         organization_id: org?.id ?? "",
         channel_id: channel_id!,
         sender_id: "me",
-        body,
-        kind: "text",
+        body: input.body ?? null,
+        kind: input.attachments?.length ? "attachment" : "text",
+        attachments: (input.attachments ?? []).map((a, idx) => ({
+          id: `optimistic-att-${idx}`,
+          filename: a.filename,
+          content_type: a.content_type ?? null,
+          size_bytes: a.data_url.length,
+          data_url: a.data_url,
+          created_at: new Date().toISOString(),
+        })) as MessageAttachment[],
+        reactions: [] as MessageReaction[],
         created_at: new Date().toISOString(),
       };
       qc.setQueryData<ListMessagesResponse>(["messages", channel_id], {
@@ -189,6 +221,56 @@ export function ChannelPage() {
     },
     onSettled: () => {
       qc.invalidateQueries({ queryKey: ["messages", channel_id] });
+    },
+  });
+
+  const addReaction = useMutation({
+    mutationFn: async (input: { messageId: string; emoji: string }) =>
+      apiFetch<{ status: string }>(`/messages/${input.messageId}/reactions`, {
+        method: "POST",
+        body: JSON.stringify({ emoji: input.emoji }),
+      }),
+    onSuccess: (_res, input) => {
+      qc.setQueryData<ListMessagesResponse>(["messages", channel_id], (prev) => {
+        const msgs = prev?.messages ?? [];
+        return {
+          ...(prev ?? { next_cursor: null }),
+          messages: msgs.map((m) => {
+            if (m.id !== input.messageId) return m;
+            const existing = m.reactions ?? [];
+            const hit = existing.find((r) => r.emoji === input.emoji);
+            const next = hit
+              ? existing.map((r) => (r.emoji === input.emoji ? { ...r, count: r.count + 1, reacted_by_me: true } : r))
+              : [...existing, { emoji: input.emoji, count: 1, reacted_by_me: true }];
+            return { ...m, reactions: next };
+          }),
+        };
+      });
+    },
+  });
+
+  const removeReaction = useMutation({
+    mutationFn: async (input: { messageId: string; emoji: string }) =>
+      apiFetch<{ status: string }>(`/messages/${input.messageId}/reactions/${encodeURIComponent(input.emoji)}`, {
+        method: "DELETE",
+      }),
+    onSuccess: (_res, input) => {
+      qc.setQueryData<ListMessagesResponse>(["messages", channel_id], (prev) => {
+        const msgs = prev?.messages ?? [];
+        return {
+          ...(prev ?? { next_cursor: null }),
+          messages: msgs.map((m) => {
+            if (m.id !== input.messageId) return m;
+            const existing = m.reactions ?? [];
+            const next = existing
+              .map((r) =>
+                r.emoji === input.emoji ? { ...r, count: Math.max(0, r.count - 1), reacted_by_me: false } : r,
+              )
+              .filter((r) => r.count > 0);
+            return { ...m, reactions: next };
+          }),
+        };
+      });
     },
   });
 
@@ -208,10 +290,6 @@ export function ChannelPage() {
     },
   });
 
-  if (!org || !channel) {
-    return <div className="text-slate-300">Channel not found.</div>;
-  }
-
   function onTypingChange(v: string) {
     setText(v);
     if (!channel_id) return;
@@ -225,9 +303,12 @@ export function ChannelPage() {
   async function onSubmit(e: React.FormEvent) {
     e.preventDefault();
     const body = text.trim();
-    if (!body) return;
+    if (!body && pendingAttachments.length === 0) return;
     setText("");
-    send.mutate(body);
+    const attachments = pendingAttachments.length ? pendingAttachments : undefined;
+    setPendingAttachments([]);
+    setEmojiOpen(false);
+    send.mutate({ body: body || undefined, attachments });
   }
 
   const typingUsers = Object.keys(typingByUser)
@@ -240,62 +321,25 @@ export function ChannelPage() {
           .map((id) => memberById.get(id)?.display_name ?? id.slice(0, 8))
           .join(", ") + (typingUsers.length === 1 ? " is typing…" : " are typing…");
 
-  const onlineCount = (members.data?.members ?? []).filter((m) => presenceByUser[m.user_id] === "online").length;
-
   const orderedMessages = useMemo(() => {
     const list = messages.data?.messages ?? [];
     // API returns newest-first; UI should show newest at bottom.
     return [...list].reverse();
   }, [messages.data]);
 
+  const channelTitle = channel?.kind === "dm" ? `Direct message` : `# ${channel?.name ?? ""}`;
+
+  if (orgs.isLoading) return <div className="text-slate-300">Loading...</div>;
+  if (!org) return <div className="text-slate-300">Org not found.</div>;
+  if (!channel) return <div className="text-slate-300">Channel not found.</div>;
+
   return (
     <div className="grid gap-6 md:grid-cols-[280px_1fr]">
-      <aside className="rounded-xl border border-slate-800 bg-slate-900/30 p-3">
-        <div className="px-2 py-2 text-sm font-semibold">{org.name}</div>
-
-        <div className="mt-2 space-y-1">
-          {(channels.data?.channels ?? []).map((c) => (
-            <Link
-              key={c.id}
-              to={`/app/${org.slug}/channels/${c.id}`}
-              className={`block rounded-md px-2 py-1.5 text-sm hover:bg-slate-800/60 ${
-                c.id === channel_id ? "text-white" : "text-slate-200"
-              }`}
-            >
-              # {c.name}
-            </Link>
-          ))}
-        </div>
-
-        <div className="mt-3 border-t border-slate-800 pt-3">
-          <div className="px-2 text-xs font-semibold text-slate-400">
-            Members {members.isLoading ? "" : `(${onlineCount} online)`}
-          </div>
-          <div className="mt-2 space-y-1">
-            {(members.data?.members ?? []).slice(0, 12).map((m) => {
-              const online = presenceByUser[m.user_id] === "online";
-              return (
-                <div key={m.user_id} className="flex items-center justify-between rounded-md px-2 py-1 text-sm">
-                  <div className="flex items-center gap-2">
-                    <span className={`h-2 w-2 rounded-full ${online ? "bg-emerald-400" : "bg-slate-600"}`} />
-                    <span className="text-slate-200">{m.display_name}</span>
-                  </div>
-                  <span className="text-xs text-slate-500">{m.role}</span>
-                </div>
-              );
-            })}
-          </div>
-          <div className="mt-2 px-2">
-            <Link className="text-xs text-indigo-400 hover:underline" to={`/admin/${org.slug}`}>
-              Open admin panel
-            </Link>
-          </div>
-        </div>
-      </aside>
+      <OrgSidebar org={org} activeChannelId={channel_id} presenceByUser={presenceByUser} />
 
       <section className="rounded-xl border border-slate-800 bg-slate-900/30 p-4">
         <div className="flex items-center justify-between">
-          <div className="text-lg font-semibold"># {channel.name}</div>
+          <div className="text-lg font-semibold">{channelTitle}</div>
           <div className="text-xs text-slate-400">{connected ? "realtime online" : "realtime offline"}</div>
         </div>
 
@@ -312,25 +356,169 @@ export function ChannelPage() {
 
         <div className="mt-4 h-[60vh] overflow-auto rounded-lg border border-slate-800 bg-slate-950/30 p-3">
           <div className="space-y-3">
-            {orderedMessages.map((m) => (
-              <div key={m.id} className="text-sm">
-                <div className="text-xs text-slate-400">
-                  {(memberById.get(m.sender_id)?.display_name ?? m.sender_id.slice(0, 8)) +
-                    " . " +
-                    formatDateTime(m.created_at)}
+            {orderedMessages.map((m) => {
+              const isMe = m.sender_id === (me?.id ?? "me") || m.sender_id === "me";
+              const senderName = memberById.get(m.sender_id)?.display_name ?? m.sender_id.slice(0, 8);
+              return (
+                <div key={m.id} className={`flex ${isMe ? "justify-end" : "justify-start"}`}>
+                  <div className={`flex max-w-[88%] items-end gap-2 ${isMe ? "flex-row-reverse" : "flex-row"}`}>
+                    {!isMe ? <Avatar name={senderName} size={28} online={presenceByUser[m.sender_id] === "online"} /> : null}
+                    <div className="min-w-0">
+                      <div className={`mb-1 text-xs text-slate-500 ${isMe ? "text-right" : "text-left"}`}>
+                        {senderName + " · " + formatDateTime(m.created_at)}
+                      </div>
+                      <div
+                        className={`w-fit rounded-2xl px-3 py-2 text-sm leading-snug ${
+                          isMe ? "ml-auto bg-indigo-600 text-white" : "mr-auto bg-slate-800 text-slate-100"
+                        }`}
+                      >
+                        {m.body ? <div className="whitespace-pre-wrap">{m.body}</div> : null}
+                        {(m.attachments ?? []).length ? (
+                          <div className={`${m.body ? "mt-2" : ""} space-y-2`}>
+                            {(m.attachments ?? []).map((a) => {
+                              const isImage = (a.content_type ?? "").startsWith("image/") || a.data_url.startsWith("data:image/");
+                              return (
+                                <div key={a.id} className="rounded-xl border border-white/10 bg-black/10 p-2">
+                                  {isImage ? (
+                                    <img
+                                      alt={a.filename}
+                                      className="max-h-64 w-auto rounded-lg"
+                                      src={a.data_url}
+                                    />
+                                  ) : (
+                                    <a
+                                      className="text-sm text-indigo-200 underline"
+                                      download={a.filename}
+                                      href={a.data_url}
+                                    >
+                                      {a.filename}
+                                    </a>
+                                  )}
+                                </div>
+                              );
+                            })}
+                          </div>
+                        ) : null}
+                      </div>
+                      <div className={`mt-2 flex flex-wrap gap-1 ${isMe ? "justify-end" : "justify-start"}`}>
+                        {(m.reactions ?? []).map((r) => (
+                          <button
+                            key={r.emoji}
+                            className={`rounded-full border px-2 py-0.5 text-xs ${
+                              r.reacted_by_me
+                                ? "border-indigo-500/60 bg-indigo-500/20 text-indigo-100"
+                                : "border-slate-700 bg-slate-900/40 text-slate-200 hover:bg-slate-800/60"
+                            }`}
+                            onClick={() => {
+                              if (r.reacted_by_me) removeReaction.mutate({ messageId: m.id, emoji: r.emoji });
+                              else addReaction.mutate({ messageId: m.id, emoji: r.emoji });
+                            }}
+                            type="button"
+                          >
+                            {r.emoji} {r.count}
+                          </button>
+                        ))}
+                        <button
+                          className="rounded-full border border-slate-700 bg-slate-900/40 px-2 py-0.5 text-xs text-slate-200 hover:bg-slate-800/60"
+                          onClick={() => {
+                            const emoji = prompt("React with emoji:");
+                            if (!emoji) return;
+                            addReaction.mutate({ messageId: m.id, emoji });
+                          }}
+                          type="button"
+                        >
+                          🙂
+                        </button>
+                      </div>
+                    </div>
+                  </div>
                 </div>
-                <div className="text-slate-100">{m.body}</div>
-              </div>
-            ))}
+              );
+            })}
             <div ref={bottomRef} />
           </div>
         </div>
 
         {typingText ? <div className="mt-2 text-xs text-slate-400">{typingText}</div> : null}
 
-        <form className="mt-3 flex gap-2" onSubmit={onSubmit}>
+        {pendingAttachments.length ? (
+          <div className="mt-3 flex flex-wrap gap-2">
+            {pendingAttachments.map((a, idx) => (
+              <div
+                key={`${a.filename}-${idx}`}
+                className="flex items-center gap-2 rounded-lg border border-slate-800 bg-slate-950/30 px-2 py-1"
+              >
+                <span className="max-w-[220px] truncate text-xs text-slate-200">{a.filename}</span>
+                <button
+                  className="text-xs text-slate-400 hover:text-slate-200"
+                  onClick={() => setPendingAttachments((prev) => prev.filter((_, i) => i !== idx))}
+                  type="button"
+                >
+                  ✕
+                </button>
+              </div>
+            ))}
+          </div>
+        ) : null}
+
+        {emojiOpen ? (
+          <div className="mt-2 flex flex-wrap gap-1 rounded-lg border border-slate-800 bg-slate-950/30 p-2">
+            {["😀", "😂", "❤️", "👍", "🎉", "🙏", "🔥", "😮", "😢", "😡", "✅", "👀"].map((e) => (
+              <button
+                key={e}
+                className="rounded-md px-2 py-1 text-sm hover:bg-slate-800/60"
+                onClick={() => setText((t) => (t ? `${t} ${e}` : e))}
+                type="button"
+              >
+                {e}
+              </button>
+            ))}
+          </div>
+        ) : null}
+
+        <form className="mt-3 space-y-2" onSubmit={onSubmit}>
+          <div className="flex gap-2">
+            <Button className="bg-slate-900 hover:bg-slate-800" onClick={() => setEmojiOpen((v) => !v)} type="button">
+              🙂
+            </Button>
+            <Button className="bg-slate-900 hover:bg-slate-800" onClick={() => fileInputRef.current?.click()} type="button">
+              📎
+            </Button>
+            <input
+              className="hidden"
+              multiple
+              onChange={(e) => {
+                const files = Array.from(e.target.files ?? []);
+                if (!files.length) return;
+                const readers = files.slice(0, 3).map(
+                  (f) =>
+                    new Promise<{ filename: string; content_type?: string; data_url: string }>((resolve, reject) => {
+                      if (f.size > 2_000_000) return reject(new Error("File too large (max 2MB each for now)."));
+                      const fr = new FileReader();
+                      fr.onload = () =>
+                        resolve({
+                          filename: f.name,
+                          content_type: f.type || undefined,
+                          data_url: typeof fr.result === "string" ? fr.result : "",
+                        });
+                      fr.onerror = () => reject(new Error("Failed to read file."));
+                      fr.readAsDataURL(f);
+                    }),
+                );
+                Promise.all(readers)
+                  .then((atts) => setPendingAttachments((prev) => [...prev, ...atts.filter((a) => a.data_url)]))
+                  .catch((err) => alert((err as Error).message));
+                e.target.value = "";
+              }}
+              ref={fileInputRef}
+              type="file"
+            />
+            <div className="flex-1" />
+          </div>
           <Input value={text} onChange={(e) => onTypingChange(e.target.value)} placeholder="Message…" />
-          <Button disabled={send.isPending}>Send</Button>
+          <Button className="bg-indigo-600 hover:bg-indigo-500" disabled={send.isPending} type="submit">
+            Send
+          </Button>
         </form>
       </section>
     </div>

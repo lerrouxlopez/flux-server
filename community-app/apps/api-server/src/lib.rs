@@ -8,6 +8,8 @@ pub mod routes_audit;
 pub mod routes_auth;
 pub mod routes_branding;
 pub mod routes_channels;
+pub mod routes_dms;
+pub mod routes_friends;
 pub mod routes_media;
 pub mod routes_messages;
 pub mod routes_orgs;

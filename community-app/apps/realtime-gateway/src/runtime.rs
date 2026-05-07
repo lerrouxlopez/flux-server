@@ -648,6 +648,33 @@ async fn fetch_message(pool: &PgPool, message_id: Uuid) -> anyhow::Result<Option
         return Ok(None);
     };
 
+    let attachments = sqlx::query(
+        r#"
+        select id, filename, content_type, size_bytes, storage_path, created_at
+        from message_attachments
+        where message_id = $1
+        order by created_at asc
+        "#,
+    )
+    .bind(message_id)
+    .fetch_all(pool)
+    .await
+    .unwrap_or_default();
+
+    let reactions = sqlx::query(
+        r#"
+        select emoji, count(*)::bigint as cnt
+        from message_reactions
+        where message_id = $1
+        group by emoji
+        order by emoji asc
+        "#,
+    )
+    .bind(message_id)
+    .fetch_all(pool)
+    .await
+    .unwrap_or_default();
+
     let v = serde_json::json!({
         "id": row.get::<Uuid,_>("id"),
         "organization_id": row.get::<Uuid,_>("organization_id"),
@@ -655,6 +682,19 @@ async fn fetch_message(pool: &PgPool, message_id: Uuid) -> anyhow::Result<Option
         "sender_id": row.get::<Uuid,_>("sender_id"),
         "body": row.try_get::<Option<String>,_>("body").ok().flatten(),
         "kind": row.get::<String,_>("kind"),
+        "attachments": attachments.into_iter().map(|r| serde_json::json!({
+            "id": r.get::<Uuid,_>("id"),
+            "filename": r.get::<String,_>("filename"),
+            "content_type": r.try_get::<Option<String>,_>("content_type").ok().flatten(),
+            "size_bytes": r.get::<i64,_>("size_bytes"),
+            "data_url": r.get::<String,_>("storage_path"),
+            "created_at": r.get::<time::OffsetDateTime,_>("created_at"),
+        })).collect::<Vec<_>>(),
+        "reactions": reactions.into_iter().map(|r| serde_json::json!({
+            "emoji": r.get::<String,_>("emoji"),
+            "count": r.get::<i64,_>("cnt"),
+            "reacted_by_me": false,
+        })).collect::<Vec<_>>(),
         "created_at": row.get::<time::OffsetDateTime,_>("created_at"),
         "edited_at": row.try_get::<Option<time::OffsetDateTime>,_>("edited_at").ok().flatten(),
         "deleted_at": row.try_get::<Option<time::OffsetDateTime>,_>("deleted_at").ok().flatten(),

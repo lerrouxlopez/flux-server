@@ -73,6 +73,7 @@ async fn list_org_channels(
         select id, organization_id, name, kind, created_at
         from channels
         where organization_id = $1
+          and kind <> 'dm'
         order by created_at asc
         "#,
     )

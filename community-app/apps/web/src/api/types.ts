@@ -26,12 +26,29 @@ export type Message = {
   sender_id: string;
   body: string | null;
   kind: string;
+  attachments?: MessageAttachment[];
+  reactions?: MessageReaction[];
   created_at: string;
   edited_at?: string | null;
   deleted_at?: string | null;
 };
 
 export type ListMessagesResponse = { messages: Message[]; next_cursor?: string | null };
+
+export type MessageAttachment = {
+  id: string;
+  filename: string;
+  content_type?: string | null;
+  size_bytes: number;
+  data_url: string;
+  created_at: string;
+};
+
+export type MessageReaction = {
+  emoji: string;
+  count: number;
+  reacted_by_me: boolean;
+};
 
 export type MediaRoom = {
   id: string;
@@ -77,3 +94,20 @@ export type AuditLogEntry = {
   created_at: string;
 };
 export type AuditLogsResponse = { entries: AuditLogEntry[] };
+
+export type UserSummary = { id: string; email: string; display_name: string };
+
+export type FriendRequest = {
+  id: string;
+  requester: UserSummary;
+  addressee: UserSummary;
+  status: string;
+  created_at: string;
+  responded_at?: string | null;
+};
+
+export type FriendRequestsResponse = { requests: FriendRequest[] };
+export type FriendsResponse = { friends: UserSummary[] };
+
+export type DmThread = { channel_id: string; peer: UserSummary };
+export type DmsResponse = { dms: DmThread[] };

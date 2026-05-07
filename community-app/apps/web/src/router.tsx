@@ -8,6 +8,8 @@ import { OrgAppPage } from "./views/OrgAppPage";
 import { ChannelPage } from "./views/ChannelPage";
 import { VoiceRoomPage } from "./views/VoiceRoomPage";
 import { AdminPage } from "./views/AdminPage";
+import { FriendsPage } from "./views/FriendsPage";
+import { ProfilePage } from "./views/ProfilePage";
 
 export const router = createBrowserRouter([
   {
@@ -20,6 +22,8 @@ export const router = createBrowserRouter([
       { path: "/app/:org_slug", element: <RequireAuth><OrgAppPage /></RequireAuth> },
       { path: "/app/:org_slug/channels/:channel_id", element: <RequireAuth><ChannelPage /></RequireAuth> },
       { path: "/app/:org_slug/voice/:room_id", element: <RequireAuth><VoiceRoomPage /></RequireAuth> },
+      { path: "/app/:org_slug/friends", element: <RequireAuth><FriendsPage /></RequireAuth> },
+      { path: "/profile", element: <RequireAuth><ProfilePage /></RequireAuth> },
       { path: "/admin/:org_slug", element: <RequireAuth><AdminPage /></RequireAuth> },
     ],
   },
