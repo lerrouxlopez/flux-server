@@ -15,12 +15,12 @@ import type {
   OrgsListResponse,
 } from "../api/types";
 import { createRealtimeClient } from "../realtime/ws";
-import { Input } from "../components/Input";
 import { Button } from "../components/Button";
 import { useAuthStore } from "../state/auth";
 import { useBrandingStore } from "../state/branding";
 import { OrgSidebar } from "../components/OrgSidebar";
 import { Avatar } from "../components/Avatar";
+import { TextArea } from "../components/TextArea";
 
 type SendMessageResponse = Message;
 
@@ -42,6 +42,7 @@ export function ChannelPage() {
 
   const typingTimeout = useRef<number | null>(null);
   const fileInputRef = useRef<HTMLInputElement | null>(null);
+  const textAreaRef = useRef<HTMLTextAreaElement | null>(null);
   const [typingByUser, setTypingByUser] = useState<Record<string, number>>({});
   const [presenceByUser, setPresenceByUser] = useState<Record<string, PresenceStatus>>({});
 
@@ -305,6 +306,7 @@ export function ChannelPage() {
     const body = text.trim();
     if (!body && pendingAttachments.length === 0) return;
     setText("");
+    if (textAreaRef.current) textAreaRef.current.style.height = "";
     const attachments = pendingAttachments.length ? pendingAttachments : undefined;
     setPendingAttachments([]);
     setEmojiOpen(false);
@@ -339,22 +341,21 @@ export function ChannelPage() {
 
       <section className="rounded-xl border border-slate-800 bg-slate-900/30 p-4">
         <div className="flex items-center justify-between">
-          <div className="text-lg font-semibold">{channelTitle}</div>
+          <div className="flex items-center gap-2">
+            <div className="text-lg font-semibold">{channelTitle}</div>
+            <button
+              className="grid h-8 w-8 place-items-center rounded-md bg-slate-900 text-slate-200 hover:bg-slate-800 disabled:opacity-50"
+              disabled={createMeeting.isPending}
+              onClick={() => createMeeting.mutate()}
+              title="Start meeting"
+              type="button"
+            >
+              📹
+            </button>
+          </div>
           <div className="text-xs text-slate-400">{connected ? "realtime online" : "realtime offline"}</div>
         </div>
-
-        <div className="mt-3 flex gap-2">
-          <Button
-            className="bg-emerald-600 hover:bg-emerald-500"
-            disabled={createMeeting.isPending}
-            onClick={() => createMeeting.mutate()}
-            type="button"
-          >
-            {createMeeting.isPending ? "Creating…" : "Start meeting"}
-          </Button>
-        </div>
-
-        <div className="mt-4 h-[60vh] overflow-auto rounded-lg border border-slate-800 bg-slate-950/30 p-3">
+<div className="mt-4 h-[60vh] overflow-auto rounded-lg border border-slate-800 bg-slate-950/30 p-3">
           <div className="space-y-3">
             {orderedMessages.map((m) => {
               const isMe = m.sender_id === (me?.id ?? "me") || m.sender_id === "me";
@@ -478,12 +479,6 @@ export function ChannelPage() {
 
         <form className="mt-3 space-y-2" onSubmit={onSubmit}>
           <div className="flex gap-2">
-            <Button className="bg-slate-900 hover:bg-slate-800" onClick={() => setEmojiOpen((v) => !v)} type="button">
-              🙂
-            </Button>
-            <Button className="bg-slate-900 hover:bg-slate-800" onClick={() => fileInputRef.current?.click()} type="button">
-              📎
-            </Button>
             <input
               className="hidden"
               multiple
@@ -515,11 +510,56 @@ export function ChannelPage() {
             />
             <div className="flex-1" />
           </div>
-          <Input value={text} onChange={(e) => onTypingChange(e.target.value)} placeholder="Message…" />
-          <Button className="bg-indigo-600 hover:bg-indigo-500" disabled={send.isPending} type="submit">
-            Send
-          </Button>
-        </form>
+          <div className="rounded-xl border border-slate-800 bg-slate-950/30 px-3 py-2">
+            <TextArea
+              ref={textAreaRef}
+              rows={1}
+              value={text}
+              placeholder="Type a message"
+              onChange={(e) => onTypingChange(e.target.value)}
+              onKeyDown={(e) => {
+                if (e.key === "Enter" && !e.shiftKey) {
+                  e.preventDefault();
+                  (e.currentTarget.form as HTMLFormElement | null)?.requestSubmit();
+                }
+              }}
+              onInput={(e) => {
+                const el = e.currentTarget;
+                el.style.height = "";
+                el.style.height = Math.min(el.scrollHeight, 180) + "px";
+              }}
+              className="border-0 bg-transparent px-0 py-0 focus:border-0"
+            />
+            <div className="mt-2 flex items-center justify-end gap-2">
+              <button
+                className="rounded-md px-2 py-1 text-sm text-slate-300 hover:bg-slate-800/60 hover:text-slate-100"
+                onClick={() => setEmojiOpen((v) => !v)}
+                type="button"
+                title="Emoji"
+              >
+                🙂
+              </button>
+              <button
+                className="rounded-md px-2 py-1 text-sm text-slate-300 hover:bg-slate-800/60 hover:text-slate-100"
+                onClick={() => fileInputRef.current?.click()}
+                type="button"
+                title="Attach"
+              >
+                📎
+              </button>
+              <button
+                className={`rounded-md px-3 py-1.5 text-sm ${
+                  send.isPending ? "bg-slate-800 text-slate-400" : "bg-indigo-600 text-white hover:bg-indigo-500"
+                }`}
+                disabled={send.isPending}
+                type="submit"
+                title="Send"
+              >
+                ➤
+              </button>
+            </div>
+          </div>
+</form>
       </section>
     </div>
   );

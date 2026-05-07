@@ -83,9 +83,6 @@ export function OrgSidebar(props: {
     },
   });
 
-  const myRole = members.data?.members.find((m) => m.user_id === me?.id)?.role ?? null;
-  const canSeeAdmin = myRole === "owner" || myRole === "admin";
-
   const onlineCount = useMemo(() => {
     const presence = props.presenceByUser ?? {};
     return (members.data?.members ?? []).filter((m) => presence[m.user_id] === "online").length;
@@ -240,13 +237,7 @@ export function OrgSidebar(props: {
             </Link>
           </div>
         ) : null}
-        <div className="mt-2 px-2">
-          {canSeeAdmin ? (
-            <Link className="text-xs text-indigo-400 hover:underline" to={`/admin/${props.org.slug}`}>
-              Open admin panel
-            </Link>
-          ) : null}
-        </div>
+        <div className="mt-2 px-2">{/* Admin moved to user dropdown */}</div>
       </div>
     </aside>
   );
