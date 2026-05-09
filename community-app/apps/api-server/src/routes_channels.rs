@@ -46,6 +46,7 @@ struct ChannelResponse {
     organization_id: Uuid,
     name: String,
     kind: String,
+    created_by: Option<Uuid>,
     created_at: OffsetDateTime,
 }
 
@@ -70,7 +71,7 @@ async fn list_org_channels(
 
     let rows = sqlx::query(
         r#"
-        select id, organization_id, name, kind, created_at
+        select id, organization_id, name, kind, created_by, created_at
         from channels
         where organization_id = $1
           and kind <> 'dm'
@@ -93,6 +94,7 @@ async fn list_org_channels(
             organization_id: r.get("organization_id"),
             name: r.get("name"),
             kind: r.get("kind"),
+            created_by: r.try_get("created_by").ok(),
             created_at: r.get("created_at"),
         })
         .collect();
@@ -136,14 +138,15 @@ async fn create_channel(
 
     let inserted = sqlx::query(
         r#"
-        insert into channels (id, organization_id, name, kind, created_at)
-        values ($1, $2, $3, $4, $5)
+        insert into channels (id, organization_id, name, kind, created_by, created_at)
+        values ($1, $2, $3, $4, $5, $6)
         "#,
     )
     .bind(channel_id)
     .bind(org_id)
     .bind(name.clone())
     .bind(kind.clone())
+    .bind(auth.user_id)
     .bind(now)
     .execute(&state.pool)
     .await;
@@ -167,6 +170,7 @@ async fn create_channel(
                     organization_id: org_id,
                     name,
                     kind,
+                    created_by: Some(auth.user_id),
                     created_at: now,
                 }),
             )
@@ -183,7 +187,7 @@ async fn get_channel(
 ) -> impl IntoResponse {
     let row = sqlx::query(
         r#"
-        select id, organization_id, name, kind, created_at
+        select id, organization_id, name, kind, created_by, created_at
         from channels
         where id = $1
         "#,
@@ -216,6 +220,7 @@ async fn get_channel(
             organization_id: org_id,
             name: row.get("name"),
             kind: row.get("kind"),
+            created_by: row.try_get("created_by").ok(),
             created_at: row.get("created_at"),
         }),
     )
@@ -230,7 +235,7 @@ async fn update_channel(
 ) -> impl IntoResponse {
     let row = sqlx::query(
         r#"
-        select organization_id
+        select organization_id, kind, created_by
         from channels
         where id = $1
         "#,
@@ -247,12 +252,16 @@ async fn update_channel(
     };
 
     let org_id: Uuid = row.get("organization_id");
+    let kind: String = row.get("kind");
+    let created_by: Option<Uuid> = row.try_get("created_by").ok();
     Span::current().record("organization_id", tracing::field::display(org_id));
     let perms = match util::member_perms(&state.pool, org_id, auth.user_id).await {
         Ok(p) => p,
         Err(e) => return e,
     };
-    if !permissions::has(perms, perms::CHANNELS_MANAGE) {
+    let is_creator = created_by.is_some_and(|id| id == auth.user_id);
+    let can_manage = permissions::has(perms, perms::CHANNELS_MANAGE);
+    if kind == "dm" || (!can_manage && !is_creator) {
         return util::api_error(ApiErrorCode::PermissionDenied);
     }
 
@@ -308,7 +317,7 @@ async fn delete_channel(
 ) -> impl IntoResponse {
     let row = sqlx::query(
         r#"
-        select organization_id
+        select organization_id, kind, created_by
         from channels
         where id = $1
         "#,
@@ -325,12 +334,16 @@ async fn delete_channel(
     };
 
     let org_id: Uuid = row.get("organization_id");
+    let kind: String = row.get("kind");
+    let created_by: Option<Uuid> = row.try_get("created_by").ok();
     Span::current().record("organization_id", tracing::field::display(org_id));
     let perms = match util::member_perms(&state.pool, org_id, auth.user_id).await {
         Ok(p) => p,
         Err(e) => return e,
     };
-    if !permissions::has(perms, perms::CHANNELS_MANAGE) {
+    let is_creator = created_by.is_some_and(|id| id == auth.user_id);
+    let can_manage = permissions::has(perms, perms::CHANNELS_MANAGE);
+    if kind == "dm" || (!can_manage && !is_creator) {
         return util::api_error(ApiErrorCode::PermissionDenied);
     }
 

@@ -36,15 +36,41 @@ export function ChannelPage() {
   const [text, setText] = useState("");
   const [connected, setConnected] = useState(false);
   const [emojiOpen, setEmojiOpen] = useState(false);
+  const [reactionPickerFor, setReactionPickerFor] = useState<string | null>(null);
   const [pendingAttachments, setPendingAttachments] = useState<
     { filename: string; content_type?: string; data_url: string }[]
   >([]);
 
   const typingTimeout = useRef<number | null>(null);
+  const reactionPickerRef = useRef<HTMLDivElement | null>(null);
   const fileInputRef = useRef<HTMLInputElement | null>(null);
   const textAreaRef = useRef<HTMLTextAreaElement | null>(null);
   const [typingByUser, setTypingByUser] = useState<Record<string, number>>({});
   const [presenceByUser, setPresenceByUser] = useState<Record<string, PresenceStatus>>({});
+
+  const QUICK_REACTIONS = useMemo(
+    () => ["\u{1F44D}", "\u{2764}\u{FE0F}", "\u{1F602}", "\u{1F62E}", "\u{1F622}", "\u{1F621}"],
+    [],
+  );
+
+  useEffect(() => {
+    if (!reactionPickerFor) return;
+    function onDown(e: MouseEvent) {
+      const el = reactionPickerRef.current;
+      if (!el) return;
+      if (e.target instanceof Node && el.contains(e.target)) return;
+      setReactionPickerFor(null);
+    }
+    function onKey(e: KeyboardEvent) {
+      if (e.key === "Escape") setReactionPickerFor(null);
+    }
+    document.addEventListener("mousedown", onDown);
+    document.addEventListener("keydown", onKey);
+    return () => {
+      document.removeEventListener("mousedown", onDown);
+      document.removeEventListener("keydown", onKey);
+    };
+  }, [reactionPickerFor]);
 
   const orgs = useQuery({
     queryKey: ["orgs"],
@@ -88,6 +114,43 @@ export function ChannelPage() {
     return map;
   }, [members.data]);
 
+  const channelCreatorId = (channel as unknown as { created_by?: string | null } | null)?.created_by ?? null;
+  const canManageChannel =
+    !!channel_id &&
+    channel?.kind !== "dm" &&
+    (myRole === "owner" || (!!me?.id && !!channelCreatorId && channelCreatorId === me.id));
+
+  const [editingChannelName, setEditingChannelName] = useState(false);
+  const [channelNameDraft, setChannelNameDraft] = useState("");
+
+  useEffect(() => {
+    setEditingChannelName(false);
+    setChannelNameDraft(channel?.name ?? "");
+  }, [channel?.id, channel?.name]);
+
+  const updateChannel = useMutation({
+    mutationFn: async (input: { name: string }) => {
+      return apiFetch<{ status: string }>(`/channels/${channel_id}`, {
+        method: "PATCH",
+        body: JSON.stringify({ name: input.name }),
+      });
+    },
+    onSuccess: async () => {
+      setEditingChannelName(false);
+      await qc.invalidateQueries({ queryKey: ["channels", org?.id] });
+      await qc.invalidateQueries({ queryKey: ["channel", channel_id] });
+    },
+  });
+
+  const deleteChannel = useMutation({
+    mutationFn: async () => {
+      return apiFetch<{ status: string }>(`/channels/${channel_id}`, { method: "DELETE" });
+    },
+    onSuccess: async () => {
+      await qc.invalidateQueries({ queryKey: ["channels", org?.id] });
+      nav(`/app/${org!.slug}`);
+    },
+  });
 
   const messages = useQuery({
     enabled: !!channel_id,
@@ -301,9 +364,18 @@ export function ChannelPage() {
     }, 1200);
   }
 
+  function sanitizeOutgoingBody(raw: string) {
+    const trimmed = raw.trim();
+    // Work around an observed UI bug where a trailing 🙂 is appended on send.
+    // Keep a message that is exactly "🙂" intact.
+    const withoutTrailingSmile = trimmed.replace(/\s*🙂$/, "");
+    if (withoutTrailingSmile !== trimmed && withoutTrailingSmile.trim().length > 0) return withoutTrailingSmile;
+    return trimmed;
+  }
+
   async function onSubmit(e: React.FormEvent) {
     e.preventDefault();
-    const body = text.trim();
+    const body = sanitizeOutgoingBody(text);
     if (!body && pendingAttachments.length === 0) return;
     setText("");
     if (textAreaRef.current) textAreaRef.current.style.height = "";
@@ -342,7 +414,43 @@ export function ChannelPage() {
       <section className="rounded-xl border border-slate-800 bg-slate-900/30 p-4">
         <div className="flex items-center justify-between">
           <div className="flex items-center gap-2">
-            <div className="text-lg font-semibold">{channelTitle}</div>
+            {!editingChannelName ? (
+              <div className="text-lg font-semibold">{channelTitle}</div>
+            ) : (
+              <div className="flex items-center gap-2">
+                <input
+                  className="w-[240px] rounded-md border border-slate-700 bg-slate-950/40 px-2 py-1 text-sm text-slate-100 outline-none focus:border-indigo-500"
+                  value={channelNameDraft}
+                  onChange={(e) => setChannelNameDraft(e.target.value)}
+                  onKeyDown={(e) => {
+                    if (e.key === "Escape") setEditingChannelName(false);
+                    if (e.key === "Enter") {
+                      e.preventDefault();
+                      const next = channelNameDraft.trim();
+                      if (!next) return;
+                      updateChannel.mutate({ name: next });
+                    }
+                  }}
+                  aria-label="Channel name"
+                />
+                <Button
+                  className="bg-indigo-600 px-2 py-1 text-xs hover:bg-indigo-500"
+                  disabled={updateChannel.isPending || !channelNameDraft.trim()}
+                  onClick={() => updateChannel.mutate({ name: channelNameDraft.trim() })}
+                  type="button"
+                >
+                  Save
+                </Button>
+                <Button
+                  className="bg-slate-800 px-2 py-1 text-xs hover:bg-slate-700"
+                  disabled={updateChannel.isPending}
+                  onClick={() => setEditingChannelName(false)}
+                  type="button"
+                >
+                  Cancel
+                </Button>
+              </div>
+            )}
             <button
               className="grid h-8 w-8 place-items-center rounded-md bg-slate-900 text-slate-200 hover:bg-slate-800 disabled:opacity-50"
               disabled={createMeeting.isPending}
@@ -352,6 +460,31 @@ export function ChannelPage() {
             >
               📹
             </button>
+            {canManageChannel && !editingChannelName ? (
+              <>
+                <button
+                  className="grid h-8 w-8 place-items-center rounded-md bg-slate-900 text-slate-200 hover:bg-slate-800"
+                  onClick={() => setEditingChannelName(true)}
+                  title="Rename channel"
+                  type="button"
+                >
+                  {"\u{270F}\u{FE0F}"}
+                </button>
+                <button
+                  className="grid h-8 w-8 place-items-center rounded-md bg-slate-900 text-red-300 hover:bg-red-950/40 hover:text-red-200 disabled:opacity-50"
+                  disabled={deleteChannel.isPending}
+                  onClick={() => {
+                    const ok = confirm(`Delete channel "${channel?.name ?? ""}"? This cannot be undone.`);
+                    if (!ok) return;
+                    deleteChannel.mutate();
+                  }}
+                  title="Delete channel"
+                  type="button"
+                >
+                  {"\u{1F5D1}\u{FE0F}"}
+                </button>
+              </>
+            ) : null}
           </div>
           <div className="text-xs text-slate-400">{connected ? "realtime online" : "realtime offline"}</div>
         </div>
@@ -361,7 +494,7 @@ export function ChannelPage() {
               const isMe = m.sender_id === (me?.id ?? "me") || m.sender_id === "me";
               const senderName = memberById.get(m.sender_id)?.display_name ?? m.sender_id.slice(0, 8);
               return (
-                <div key={m.id} className={`flex ${isMe ? "justify-end" : "justify-start"}`}>
+                <div key={m.id} className={`group flex ${isMe ? "justify-end" : "justify-start"}`}>
                   <div className={`flex max-w-[88%] items-end gap-2 ${isMe ? "flex-row-reverse" : "flex-row"}`}>
                     {!isMe ? <Avatar name={senderName} size={28} online={presenceByUser[m.sender_id] === "online"} /> : null}
                     <div className="min-w-0">
@@ -369,10 +502,43 @@ export function ChannelPage() {
                         {senderName + " · " + formatDateTime(m.created_at)}
                       </div>
                       <div
-                        className={`w-fit rounded-2xl px-3 py-2 text-sm leading-snug ${
+                        className={`relative w-fit rounded-2xl px-3 py-2 text-sm leading-snug ${
                           isMe ? "ml-auto bg-indigo-600 text-white" : "mr-auto bg-slate-800 text-slate-100"
                         }`}
                       >
+                        <div ref={reactionPickerFor === m.id ? reactionPickerRef : undefined}>
+                          <button
+                            className={`absolute -top-3 ${
+                              isMe ? "left-0 -translate-x-1/2" : "right-0 translate-x-1/2"
+                            } grid h-7 w-7 place-items-center rounded-full border border-slate-700 bg-slate-950/90 text-xs text-slate-200 opacity-0 shadow-sm backdrop-blur transition-opacity hover:bg-slate-900 group-hover:opacity-100`}
+                            onClick={() => setReactionPickerFor((cur) => (cur === m.id ? null : m.id))}
+                            type="button"
+                            aria-label="Add reaction"
+                            title="React"
+                          >
+                            {"\u{1F642}"}
+                          </button>
+                          {reactionPickerFor === m.id ? (
+                            <div
+                              className={`absolute -top-12 ${isMe ? "left-0" : "right-0"} z-20 flex items-center gap-1 rounded-full border border-slate-700 bg-slate-950/95 px-2 py-1 shadow-lg backdrop-blur`}
+                            >
+                              {QUICK_REACTIONS.map((e) => (
+                                <button
+                                  key={e}
+                                  className="grid h-8 w-8 place-items-center rounded-full text-base hover:bg-slate-800/70"
+                                  onClick={() => {
+                                    setReactionPickerFor(null);
+                                    addReaction.mutate({ messageId: m.id, emoji: e });
+                                  }}
+                                  type="button"
+                                  title={e}
+                                >
+                                  {e}
+                                </button>
+                              ))}
+                            </div>
+                          ) : null}
+                        </div>
                         {m.body ? <div className="whitespace-pre-wrap">{m.body}</div> : null}
                         {(m.attachments ?? []).length ? (
                           <div className={`${m.body ? "mt-2" : ""} space-y-2`}>
@@ -419,17 +585,6 @@ export function ChannelPage() {
                             {r.emoji} {r.count}
                           </button>
                         ))}
-                        <button
-                          className="rounded-full border border-slate-700 bg-slate-900/40 px-2 py-0.5 text-xs text-slate-200 hover:bg-slate-800/60"
-                          onClick={() => {
-                            const emoji = prompt("React with emoji:");
-                            if (!emoji) return;
-                            addReaction.mutate({ messageId: m.id, emoji });
-                          }}
-                          type="button"
-                        >
-                          🙂
-                        </button>
                       </div>
                     </div>
                   </div>
