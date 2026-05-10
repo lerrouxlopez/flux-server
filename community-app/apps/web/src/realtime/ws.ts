@@ -2,6 +2,8 @@ import { useAuthStore } from "../state/auth";
 
 type WsEventHandler = (evt: unknown) => void;
 
+const BACKEND_ORIGIN = (import.meta as any).env?.VITE_BACKEND_ORIGIN as string | undefined;
+
 export function createRealtimeClient(params: {
   onEvent: WsEventHandler;
   onOpen?: () => void;
@@ -33,7 +35,8 @@ export function createRealtimeClient(params: {
     const token = useAuthStore.getState().accessToken ?? localStorage.getItem("access_token");
     if (!token) return;
 
-    const url = new URL("/realtime/ws", window.location.origin);
+    const base = BACKEND_ORIGIN || window.location.origin;
+    const url = new URL("/realtime/ws", base);
     // Dev-only query param supported by backend when APP_ENV=local, but we prefer Authorization header.
     // Browsers can't set Authorization for WebSocket reliably, so we use query param here.
     url.searchParams.set("access_token", token);
@@ -61,4 +64,3 @@ export function createRealtimeClient(params: {
 
   return { start, stop, send };
 }
-

@@ -1,0 +1,89 @@
+services:
+  postgres:
+    image: postgres:16
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: app
+      POSTGRES_PASSWORD: app
+      POSTGRES_DB: community_app
+    volumes:
+      - /opt/flux/data/postgres:/var/lib/postgresql/data
+
+  redis:
+    image: redis:7
+    restart: unless-stopped
+
+  nats:
+    image: nats:2
+    restart: unless-stopped
+    command: ["-js"]
+
+  livekit:
+    image: livekit/livekit-server:latest
+    restart: unless-stopped
+    command: ["--config", "/etc/livekit.yaml"]
+    volumes:
+      - /opt/flux/livekit/livekit.yaml:/etc/livekit.yaml:ro
+    ports:
+      # Signal/HTTP is reverse-proxied by nginx (fluxserver.kineticapp.online)
+      - "127.0.0.1:7880:7880"
+      # UDP media must be reachable publicly (Cloudflare must be DNS-only for fluxserver)
+      - "7882:7882/udp"
+
+  api-server:
+    image: ghcr.io/lerrouxlopez/flux-api-server:latest
+    restart: unless-stopped
+    depends_on:
+      - postgres
+      - redis
+      - nats
+      - livekit
+    env_file:
+      - /opt/flux/.env
+    environment:
+      HTTP_ADDR: 0.0.0.0:8080
+      DATABASE_URL: postgres://app:app@postgres:5432/community_app
+      REDIS_URL: redis://redis:6379
+      NATS_URL: nats://nats:4222
+      LIVEKIT_URL_INTERNAL: http://livekit:7880
+    ports:
+      - "127.0.0.1:8010:8080"
+
+  realtime-gateway:
+    image: ghcr.io/lerrouxlopez/flux-realtime-gateway:latest
+    restart: unless-stopped
+    depends_on:
+      - postgres
+      - redis
+      - nats
+    env_file:
+      - /opt/flux/.env
+    environment:
+      WS_ADDR: 0.0.0.0:8081
+      DATABASE_URL: postgres://app:app@postgres:5432/community_app
+      REDIS_URL: redis://redis:6379
+      NATS_URL: nats://nats:4222
+      LIVEKIT_URL_INTERNAL: http://livekit:7880
+    ports:
+      - "127.0.0.1:8011:8081"
+
+  worker:
+    image: ghcr.io/lerrouxlopez/flux-worker:latest
+    restart: unless-stopped
+    depends_on:
+      - postgres
+      - redis
+      - nats
+    env_file:
+      - /opt/flux/.env
+    environment:
+      DATABASE_URL: postgres://app:app@postgres:5432/community_app
+      REDIS_URL: redis://redis:6379
+      NATS_URL: nats://nats:4222
+      LIVEKIT_URL_INTERNAL: http://livekit:7880
+
+  web:
+    image: ghcr.io/lerrouxlopez/flux-web:latest
+    restart: unless-stopped
+    ports:
+      - "127.0.0.1:8012:8080"

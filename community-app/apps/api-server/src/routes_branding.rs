@@ -32,10 +32,25 @@ struct BrandingResponse {
     organization_id: Uuid,
     app_name: String,
     theme: String,
+    ui_mode: String,
+    ui_theme: String,
     logo_url: Option<String>,
     icon_url: Option<String>,
     primary_color: Option<String>,
     secondary_color: Option<String>,
+    bg_color: Option<String>,
+    surface_color: Option<String>,
+    text_color: Option<String>,
+    muted_color: Option<String>,
+    border_color: Option<String>,
+    selection_bg: Option<String>,
+    selection_text: Option<String>,
+    dropdown_bg: Option<String>,
+    dropdown_text: Option<String>,
+    chat_bubble_me_bg: Option<String>,
+    chat_bubble_me_text: Option<String>,
+    chat_bubble_other_bg: Option<String>,
+    chat_bubble_other_text: Option<String>,
     privacy_url: Option<String>,
     terms_url: Option<String>,
     updated_at: OffsetDateTime,
@@ -65,10 +80,25 @@ async fn public_branding(
           b.organization_id,
           b.app_name,
           b.theme,
+          b.ui_mode,
+          b.ui_theme,
           b.logo_url,
           b.icon_url,
           b.primary_color,
           b.secondary_color,
+          b.bg_color,
+          b.surface_color,
+          b.text_color,
+          b.muted_color,
+          b.border_color,
+          b.selection_bg,
+          b.selection_text,
+          b.dropdown_bg,
+          b.dropdown_text,
+          b.chat_bubble_me_bg,
+          b.chat_bubble_me_text,
+          b.chat_bubble_other_bg,
+          b.chat_bubble_other_text,
           b.privacy_url,
           b.terms_url,
           b.updated_at
@@ -99,10 +129,25 @@ async fn public_branding(
             organization_id: row.get("organization_id"),
             app_name: row.get("app_name"),
             theme: row.get("theme"),
+            ui_mode: row.get("ui_mode"),
+            ui_theme: row.get("ui_theme"),
             logo_url: row.try_get("logo_url").ok(),
             icon_url: row.try_get("icon_url").ok(),
             primary_color: row.try_get("primary_color").ok(),
             secondary_color: row.try_get("secondary_color").ok(),
+            bg_color: row.try_get("bg_color").ok(),
+            surface_color: row.try_get("surface_color").ok(),
+            text_color: row.try_get("text_color").ok(),
+            muted_color: row.try_get("muted_color").ok(),
+            border_color: row.try_get("border_color").ok(),
+            selection_bg: row.try_get("selection_bg").ok(),
+            selection_text: row.try_get("selection_text").ok(),
+            dropdown_bg: row.try_get("dropdown_bg").ok(),
+            dropdown_text: row.try_get("dropdown_text").ok(),
+            chat_bubble_me_bg: row.try_get("chat_bubble_me_bg").ok(),
+            chat_bubble_me_text: row.try_get("chat_bubble_me_text").ok(),
+            chat_bubble_other_bg: row.try_get("chat_bubble_other_bg").ok(),
+            chat_bubble_other_text: row.try_get("chat_bubble_other_text").ok(),
             privacy_url: row.try_get("privacy_url").ok(),
             terms_url: row.try_get("terms_url").ok(),
             updated_at: row.get("updated_at"),
@@ -125,7 +170,9 @@ async fn get_org_branding(
 
     let row = sqlx::query(
         r#"
-        select organization_id, app_name, theme, logo_url, icon_url, primary_color, secondary_color, privacy_url, terms_url, updated_at
+        select organization_id, app_name, theme, ui_mode, ui_theme, logo_url, icon_url, primary_color, secondary_color, bg_color, surface_color, text_color, muted_color, border_color,
+               selection_bg, selection_text, dropdown_bg, dropdown_text, chat_bubble_me_bg, chat_bubble_me_text, chat_bubble_other_bg, chat_bubble_other_text,
+               privacy_url, terms_url, updated_at
         from branding_profiles
         where organization_id = $1
         "#,
@@ -147,10 +194,25 @@ async fn get_org_branding(
             organization_id: row.get("organization_id"),
             app_name: row.get("app_name"),
             theme: row.get("theme"),
+            ui_mode: row.get("ui_mode"),
+            ui_theme: row.get("ui_theme"),
             logo_url: row.try_get("logo_url").ok(),
             icon_url: row.try_get("icon_url").ok(),
             primary_color: row.try_get("primary_color").ok(),
             secondary_color: row.try_get("secondary_color").ok(),
+            bg_color: row.try_get("bg_color").ok(),
+            surface_color: row.try_get("surface_color").ok(),
+            text_color: row.try_get("text_color").ok(),
+            muted_color: row.try_get("muted_color").ok(),
+            border_color: row.try_get("border_color").ok(),
+            selection_bg: row.try_get("selection_bg").ok(),
+            selection_text: row.try_get("selection_text").ok(),
+            dropdown_bg: row.try_get("dropdown_bg").ok(),
+            dropdown_text: row.try_get("dropdown_text").ok(),
+            chat_bubble_me_bg: row.try_get("chat_bubble_me_bg").ok(),
+            chat_bubble_me_text: row.try_get("chat_bubble_me_text").ok(),
+            chat_bubble_other_bg: row.try_get("chat_bubble_other_bg").ok(),
+            chat_bubble_other_text: row.try_get("chat_bubble_other_text").ok(),
             privacy_url: row.try_get("privacy_url").ok(),
             terms_url: row.try_get("terms_url").ok(),
             updated_at: row.get("updated_at"),
@@ -166,6 +228,21 @@ struct PatchBrandingRequest {
     logo_url: Option<String>,
     primary_color: Option<String>,
     secondary_color: Option<String>,
+    ui_mode: Option<String>,
+    ui_theme: Option<String>,
+    bg_color: Option<String>,
+    surface_color: Option<String>,
+    text_color: Option<String>,
+    muted_color: Option<String>,
+    border_color: Option<String>,
+    selection_bg: Option<String>,
+    selection_text: Option<String>,
+    dropdown_bg: Option<String>,
+    dropdown_text: Option<String>,
+    chat_bubble_me_bg: Option<String>,
+    chat_bubble_me_text: Option<String>,
+    chat_bubble_other_bg: Option<String>,
+    chat_bubble_other_text: Option<String>,
     privacy_url: Option<String>,
     terms_url: Option<String>,
 }
@@ -209,6 +286,30 @@ async fn patch_org_branding(
     let logo_url = clean_opt(req.logo_url);
     let primary_color = clean_opt(req.primary_color);
     let secondary_color = clean_opt(req.secondary_color);
+    let ui_mode = req
+        .ui_mode
+        .map(|s| s.trim().to_lowercase())
+        .filter(|s| !s.is_empty());
+    if ui_mode.as_deref().is_some_and(|m| m != "work" && m != "play") {
+        return util::api_error(ApiErrorCode::ValidationError);
+    }
+    let ui_theme = req
+        .ui_theme
+        .map(|s| s.trim().to_string())
+        .filter(|s| !s.is_empty());
+    let bg_color = clean_opt(req.bg_color);
+    let surface_color = clean_opt(req.surface_color);
+    let text_color = clean_opt(req.text_color);
+    let muted_color = clean_opt(req.muted_color);
+    let border_color = clean_opt(req.border_color);
+    let selection_bg = clean_opt(req.selection_bg);
+    let selection_text = clean_opt(req.selection_text);
+    let dropdown_bg = clean_opt(req.dropdown_bg);
+    let dropdown_text = clean_opt(req.dropdown_text);
+    let chat_bubble_me_bg = clean_opt(req.chat_bubble_me_bg);
+    let chat_bubble_me_text = clean_opt(req.chat_bubble_me_text);
+    let chat_bubble_other_bg = clean_opt(req.chat_bubble_other_bg);
+    let chat_bubble_other_text = clean_opt(req.chat_bubble_other_text);
     let privacy_url = clean_opt(req.privacy_url);
     let terms_url = clean_opt(req.terms_url);
 
@@ -218,11 +319,26 @@ async fn patch_org_branding(
         set
           app_name = coalesce($2, app_name),
           theme = coalesce($3, theme),
-          logo_url = $4,
-          primary_color = $5,
-          secondary_color = $6,
-          privacy_url = $7,
-          terms_url = $8,
+          ui_mode = coalesce($4, ui_mode),
+          ui_theme = coalesce($5, ui_theme),
+          logo_url = $6,
+          primary_color = $7,
+          secondary_color = $8,
+          bg_color = $9,
+          surface_color = $10,
+          text_color = $11,
+          muted_color = $12,
+          border_color = $13,
+          selection_bg = $14,
+          selection_text = $15,
+          dropdown_bg = $16,
+          dropdown_text = $17,
+          chat_bubble_me_bg = $18,
+          chat_bubble_me_text = $19,
+          chat_bubble_other_bg = $20,
+          chat_bubble_other_text = $21,
+          privacy_url = $22,
+          terms_url = $23,
           updated_at = now()
         where organization_id = $1
         "#,
@@ -230,9 +346,24 @@ async fn patch_org_branding(
     .bind(org_id)
     .bind(app_name)
     .bind(theme)
+    .bind(ui_mode)
+    .bind(ui_theme)
     .bind(logo_url)
     .bind(primary_color)
     .bind(secondary_color)
+    .bind(bg_color)
+    .bind(surface_color)
+    .bind(text_color)
+    .bind(muted_color)
+    .bind(border_color)
+    .bind(selection_bg)
+    .bind(selection_text)
+    .bind(dropdown_bg)
+    .bind(dropdown_text)
+    .bind(chat_bubble_me_bg)
+    .bind(chat_bubble_me_text)
+    .bind(chat_bubble_other_bg)
+    .bind(chat_bubble_other_text)
     .bind(privacy_url)
     .bind(terms_url)
     .execute(&state.pool)

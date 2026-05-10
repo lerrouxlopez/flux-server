@@ -503,8 +503,12 @@ export function ChannelPage() {
                       </div>
                       <div
                         className={`relative w-fit rounded-2xl px-3 py-2 text-sm leading-snug ${
-                          isMe ? "ml-auto bg-indigo-600 text-white" : "mr-auto bg-slate-800 text-slate-100"
+                          isMe ? "ml-auto" : "mr-auto"
                         }`}
+                        style={{
+                          backgroundColor: isMe ? "var(--chat-bubble-me-bg, #4f46e5)" : "var(--chat-bubble-other-bg, #1f2937)",
+                          color: isMe ? "var(--chat-bubble-me-text, #ffffff)" : "var(--chat-bubble-other-text, #e2e8f0)",
+                        }}
                       >
                         <div ref={reactionPickerFor === m.id ? reactionPickerRef : undefined}>
                           <button

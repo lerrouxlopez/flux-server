@@ -6,64 +6,93 @@
   color-scheme: dark;
   --brand-primary: #4f46e5;
   --brand-secondary: #111827;
+  --app-bg: #020617; /* slate-950 */
+  --app-surface: #0b1220; /* slightly lifted */
+  --app-border: #1f2937; /* slate-800 */
+  --app-text: #e2e8f0; /* slate-200 */
+  --app-muted: #94a3b8; /* slate-400 */
 }
 
-/* Light mode is a "skin" over the existing dark-first Tailwind classes. */
-:root.theme-light {
+/* Brand skin (Work/Play modes + themes) */
+:root.branded[data-color-scheme="light"] {
   color-scheme: light;
-  --brand-secondary: #f8fafc;
+}
+:root.branded[data-color-scheme="dark"] {
+  color-scheme: dark;
 }
 
-:root.theme-light .bg-slate-950\/80 {
-  background-color: rgba(248, 250, 252, 0.9) !important;
-}
-:root.theme-light .bg-slate-950\/60 {
-  background-color: rgba(248, 250, 252, 0.75) !important;
-}
-:root.theme-light .bg-slate-950\/30 {
-  background-color: rgba(248, 250, 252, 0.55) !important;
-}
-:root.theme-light .bg-slate-900 {
-  background-color: #ffffff !important;
-}
-:root.theme-light .bg-slate-900\/40 {
-  background-color: rgba(255, 255, 255, 0.85) !important;
-}
-:root.theme-light .bg-slate-900\/30 {
-  background-color: rgba(255, 255, 255, 0.75) !important;
-}
-:root.theme-light .bg-slate-800 {
-  background-color: #f1f5f9 !important;
-}
-:root.theme-light .bg-slate-800\/60 {
-  background-color: rgba(241, 245, 249, 0.8) !important;
-}
-:root.theme-light .bg-slate-700 {
-  background-color: #e2e8f0 !important;
-}
-:root.theme-light .bg-slate-600 {
-  background-color: #cbd5e1 !important;
+:root.branded body {
+  background-color: var(--app-bg);
+  color: var(--app-text);
 }
 
-:root.theme-light .border-slate-800 {
-  border-color: #e2e8f0 !important;
-}
-:root.theme-light .border-slate-700 {
-  border-color: #cbd5e1 !important;
+:root.branded ::selection {
+  background: var(--selection-bg);
+  color: var(--selection-text);
 }
 
-:root.theme-light .text-slate-500 {
-  color: #64748b !important;
+:root.branded select,
+:root.branded option {
+  background-color: var(--dropdown-bg);
+  color: var(--dropdown-text);
 }
-:root.theme-light .text-slate-400 {
-  color: #475569 !important;
+
+:root.branded input,
+:root.branded textarea {
+  caret-color: var(--brand-primary);
 }
-:root.theme-light .text-slate-300 {
-  color: #334155 !important;
+
+:root.branded .bg-slate-950\/80 {
+  background-color: color-mix(in srgb, var(--app-bg) 90%, transparent) !important;
 }
-:root.theme-light .text-slate-200 {
-  color: #1f2937 !important;
+:root.branded .bg-slate-950\/60 {
+  background-color: color-mix(in srgb, var(--app-bg) 75%, transparent) !important;
 }
-:root.theme-light .text-slate-100 {
-  color: #0f172a !important;
+:root.branded .bg-slate-950\/30 {
+  background-color: color-mix(in srgb, var(--app-bg) 55%, transparent) !important;
+}
+
+:root.branded .bg-slate-900 {
+  background-color: var(--app-surface) !important;
+}
+:root.branded .bg-slate-900\/40 {
+  background-color: color-mix(in srgb, var(--app-surface) 85%, transparent) !important;
+}
+:root.branded .bg-slate-900\/30 {
+  background-color: color-mix(in srgb, var(--app-surface) 75%, transparent) !important;
+}
+:root.branded .bg-slate-800 {
+  background-color: color-mix(in srgb, var(--app-surface) 88%, #ffffff 12%) !important;
+}
+:root.branded .bg-slate-800\/60 {
+  background-color: color-mix(in srgb, var(--app-surface) 80%, transparent) !important;
+}
+:root.branded .bg-slate-700 {
+  background-color: color-mix(in srgb, var(--app-surface) 78%, #ffffff 22%) !important;
+}
+:root.branded .bg-slate-600 {
+  background-color: color-mix(in srgb, var(--app-surface) 70%, #ffffff 30%) !important;
+}
+
+:root.branded .border-slate-800 {
+  border-color: var(--app-border) !important;
+}
+:root.branded .border-slate-700 {
+  border-color: color-mix(in srgb, var(--app-border) 70%, #ffffff 30%) !important;
+}
+
+:root.branded .text-slate-500 {
+  color: color-mix(in srgb, var(--app-muted) 70%, var(--app-text) 30%) !important;
+}
+:root.branded .text-slate-400 {
+  color: var(--app-muted) !important;
+}
+:root.branded .text-slate-300 {
+  color: color-mix(in srgb, var(--app-muted) 30%, var(--app-text) 70%) !important;
+}
+:root.branded .text-slate-200 {
+  color: var(--app-text) !important;
+}
+:root.branded .text-slate-100 {
+  color: color-mix(in srgb, var(--app-text) 90%, #ffffff 10%) !important;
 }

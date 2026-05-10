@@ -1,4 +1,4 @@
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { Link, useParams } from "react-router-dom";
 import { apiFetch } from "../api/client";
@@ -13,7 +13,8 @@ import type {
 } from "../api/types";
 import { Input } from "../components/Input";
 import { Button } from "../components/Button";
-import { useBrandingStore } from "../state/branding";
+import { applyBrandingToDom, useBrandingStore } from "../state/branding";
+import { COLOR_PALETTES, THEME_PRESETS, getThemePreset, type UIMode } from "../branding/presets";
 
 type Tab = "branding" | "members" | "audit";
 
@@ -201,12 +202,84 @@ function BrandingPanel(props: {
 }) {
   const b = props.branding;
   const [appName, setAppName] = useState(b?.app_name ?? "");
-  const [theme, setTheme] = useState<"dark" | "light">(b?.theme ?? "dark");
-  const [logoUrl, setLogoUrl] = useState(b?.logo_url ?? "");
-  const [primary, setPrimary] = useState(b?.primary_color ?? "");
-  const [secondary, setSecondary] = useState(b?.secondary_color ?? "");
-  const [privacy, setPrivacy] = useState(b?.privacy_url ?? "");
-  const [terms, setTerms] = useState(b?.terms_url ?? "");
+  const [mode, setMode] = useState<UIMode>(b?.ui_mode ?? "work");
+  const [themeId, setThemeId] = useState<string>(b?.ui_theme ?? (mode === "play" ? "play-01" : "work-01"));
+  const [logoDataUrl, setLogoDataUrl] = useState<string>(b?.logo_url ?? "");
+  const initialPreset = getThemePreset(mode, themeId);
+  const [primary, setPrimary] = useState<string>(b?.primary_color ?? initialPreset.vars.brandPrimary);
+  const [secondary, setSecondary] = useState<string>(b?.secondary_color ?? initialPreset.vars.brandSecondary);
+  const [bg, setBg] = useState<string>(b?.bg_color ?? initialPreset.vars.appBg);
+  const [surface, setSurface] = useState<string>(b?.surface_color ?? initialPreset.vars.appSurface);
+  const [text, setText] = useState<string>(b?.text_color ?? initialPreset.vars.appText);
+  const [muted, setMuted] = useState<string>(b?.muted_color ?? initialPreset.vars.appMuted);
+  const [border, setBorder] = useState<string>(b?.border_color ?? initialPreset.vars.appBorder);
+  const [selectionBg, setSelectionBg] = useState<string>(b?.selection_bg ?? initialPreset.vars.brandPrimary);
+  const [selectionText, setSelectionText] = useState<string>(b?.selection_text ?? initialPreset.vars.appText);
+  const [dropdownBg, setDropdownBg] = useState<string>(b?.dropdown_bg ?? initialPreset.vars.appSurface);
+  const [dropdownText, setDropdownText] = useState<string>(b?.dropdown_text ?? initialPreset.vars.appText);
+  const [bubbleMeBg, setBubbleMeBg] = useState<string>(b?.chat_bubble_me_bg ?? initialPreset.vars.brandPrimary);
+  const [bubbleMeText, setBubbleMeText] = useState<string>(b?.chat_bubble_me_text ?? "#ffffff");
+  const [bubbleOtherBg, setBubbleOtherBg] = useState<string>(b?.chat_bubble_other_bg ?? initialPreset.vars.appSurface);
+  const [bubbleOtherText, setBubbleOtherText] = useState<string>(b?.chat_bubble_other_text ?? initialPreset.vars.appText);
+
+  const bOrgId = b?.organization_id ?? "";
+  const bAppName = b?.app_name ?? "";
+  const bUpdatedAt = b?.updated_at ?? "";
+
+  useEffect(() => {
+    if (!b) return;
+    const preset = getThemePreset(mode, themeId);
+    applyBrandingToDom({
+      organization_id: b.organization_id,
+      app_name: appName || b.app_name,
+      theme: preset.colorScheme,
+      ui_mode: mode,
+      ui_theme: themeId,
+      logo_url: logoDataUrl || null,
+      primary_color: primary || null,
+      secondary_color: secondary || null,
+      bg_color: bg || null,
+      surface_color: surface || null,
+      text_color: text || null,
+      muted_color: muted || null,
+      border_color: border || null,
+      selection_bg: selectionBg || null,
+      selection_text: selectionText || null,
+      dropdown_bg: dropdownBg || null,
+      dropdown_text: dropdownText || null,
+      chat_bubble_me_bg: bubbleMeBg || null,
+      chat_bubble_me_text: bubbleMeText || null,
+      chat_bubble_other_bg: bubbleOtherBg || null,
+      chat_bubble_other_text: bubbleOtherText || null,
+      updated_at: b.updated_at,
+    });
+    return () => {
+      applyBrandingToDom(useBrandingStore.getState().branding);
+    };
+  }, [
+    appName,
+    bg,
+    border,
+    bubbleMeBg,
+    bubbleMeText,
+    bubbleOtherBg,
+    bubbleOtherText,
+    dropdownBg,
+    dropdownText,
+    logoDataUrl,
+    mode,
+    muted,
+    primary,
+    secondary,
+    selectionBg,
+    selectionText,
+    surface,
+    text,
+    themeId,
+    bOrgId,
+    bAppName,
+    bUpdatedAt,
+  ]);
 
   if (props.loading) return <div className="mt-3 text-slate-300">Loading branding…</div>;
   if (props.error) return <div className="mt-3 text-red-400">{props.error}</div>;
@@ -214,56 +287,226 @@ function BrandingPanel(props: {
 
   return (
     <div className="mt-4">
-      <div className="text-sm text-slate-400">Configure the pre-login branding and app theme.</div>
+      <div className="text-sm text-slate-400">
+        Work/Play branding with Slate + Material accents. Colors are chosen from palettes (no URLs / free-form hex).
+      </div>
       <form
         className="mt-4 grid gap-3 sm:grid-cols-2"
         onSubmit={(e) => {
           e.preventDefault();
           props.onSave({
             app_name: appName,
-            theme,
-            logo_url: logoUrl || null,
+            ui_mode: mode,
+            ui_theme: themeId,
+            logo_url: logoDataUrl || null,
             primary_color: primary || null,
             secondary_color: secondary || null,
-            privacy_url: privacy || null,
-            terms_url: terms || null,
+            bg_color: bg || null,
+            surface_color: surface || null,
+            text_color: text || null,
+            muted_color: muted || null,
+            border_color: border || null,
+            selection_bg: selectionBg || null,
+            selection_text: selectionText || null,
+            dropdown_bg: dropdownBg || null,
+            dropdown_text: dropdownText || null,
+            chat_bubble_me_bg: bubbleMeBg || null,
+            chat_bubble_me_text: bubbleMeText || null,
+            chat_bubble_other_bg: bubbleOtherBg || null,
+            chat_bubble_other_text: bubbleOtherText || null,
           });
         }}
       >
         <div>
+          <label className="mb-1 block text-sm text-slate-300">Mode</label>
+          <select
+            className="w-full rounded-md border border-slate-800 bg-slate-900 px-3 py-2 text-sm text-slate-200 outline-none focus:border-indigo-500"
+            value={mode}
+            onChange={(e) => {
+              const nextMode = e.target.value as UIMode;
+              setMode(nextMode);
+              const nextTheme = nextMode === "play" ? "play-01" : "work-01";
+              setThemeId(nextTheme);
+              const p = getThemePreset(nextMode, nextTheme);
+              setPrimary(p.vars.brandPrimary);
+              setSecondary(p.vars.brandSecondary);
+              setBg(p.vars.appBg);
+              setSurface(p.vars.appSurface);
+              setText(p.vars.appText);
+              setMuted(p.vars.appMuted);
+              setBorder(p.vars.appBorder);
+              setSelectionBg(p.vars.brandPrimary);
+              setSelectionText(p.vars.appText);
+              setDropdownBg(p.vars.appSurface);
+              setDropdownText(p.vars.appText);
+              setBubbleMeBg(p.vars.brandPrimary);
+              setBubbleMeText("#ffffff");
+              setBubbleOtherBg(p.vars.appSurface);
+              setBubbleOtherText(p.vars.appText);
+            }}
+          >
+            <option value="work">Work Mode</option>
+            <option value="play">Play Mode</option>
+          </select>
+        </div>
+        <div>
           <label className="mb-1 block text-sm text-slate-300">Theme</label>
           <select
             className="w-full rounded-md border border-slate-800 bg-slate-900 px-3 py-2 text-sm text-slate-200 outline-none focus:border-indigo-500"
-            value={theme}
-            onChange={(e) => setTheme(e.target.value as any)}
+            value={themeId}
+            onChange={(e) => {
+              const next = e.target.value;
+              setThemeId(next);
+              const p = getThemePreset(mode, next);
+              setPrimary(p.vars.brandPrimary);
+              setSecondary(p.vars.brandSecondary);
+              setBg(p.vars.appBg);
+              setSurface(p.vars.appSurface);
+              setText(p.vars.appText);
+              setMuted(p.vars.appMuted);
+              setBorder(p.vars.appBorder);
+              setSelectionBg(p.vars.brandPrimary);
+              setSelectionText(p.vars.appText);
+              setDropdownBg(p.vars.appSurface);
+              setDropdownText(p.vars.appText);
+              setBubbleMeBg(p.vars.brandPrimary);
+              setBubbleMeText("#ffffff");
+              setBubbleOtherBg(p.vars.appSurface);
+              setBubbleOtherText(p.vars.appText);
+            }}
           >
-            <option value="dark">dark</option>
-            <option value="light">light</option>
+            {THEME_PRESETS.filter((t) => t.mode === mode).map((t) => (
+              <option key={t.id} value={t.id}>
+                {t.label}
+              </option>
+            ))}
           </select>
+          <div className="mt-1 text-xs text-slate-500">{getThemePreset(mode, themeId).description}</div>
+        </div>
+        <div>
+          <label className="mb-1 block text-sm text-slate-300">Scheme</label>
+          <div className="rounded-md border border-slate-800 bg-slate-900 px-3 py-2 text-sm text-slate-200">
+            {getThemePreset(mode, themeId).colorScheme === "light" ? "Light" : "Dark"} (from theme)
+          </div>
         </div>
         <div className="sm:col-span-2">
           <label className="mb-1 block text-sm text-slate-300">App name</label>
           <Input value={appName} onChange={(e) => setAppName(e.target.value)} />
         </div>
         <div className="sm:col-span-2">
-          <label className="mb-1 block text-sm text-slate-300">Logo URL</label>
-          <Input value={logoUrl} onChange={(e) => setLogoUrl(e.target.value)} placeholder="https://…" />
+          <label className="mb-1 block text-sm text-slate-300">Logo</label>
+          <div className="flex items-center gap-3">
+            <input
+              type="file"
+              accept="image/*"
+              className="block w-full text-sm text-slate-300 file:mr-4 file:rounded-md file:border-0 file:bg-slate-800 file:px-3 file:py-2 file:text-sm file:text-slate-200 hover:file:bg-slate-700"
+              onChange={(e) => {
+                const f = e.target.files?.[0];
+                if (!f) return;
+                if (f.size > 1_000_000) {
+                  alert("Logo too large (max 1MB).");
+                  e.target.value = "";
+                  return;
+                }
+                const fr = new FileReader();
+                fr.onload = () => setLogoDataUrl(typeof fr.result === "string" ? fr.result : "");
+                fr.readAsDataURL(f);
+              }}
+            />
+            {logoDataUrl ? (
+              <button
+                type="button"
+                className="rounded-md border border-slate-800 bg-slate-900 px-3 py-2 text-xs text-slate-200 hover:bg-slate-800/60"
+                onClick={() => setLogoDataUrl("")}
+              >
+                Clear
+              </button>
+            ) : null}
+          </div>
+          {logoDataUrl ? (
+            <div className="mt-2 rounded-lg border border-slate-800 bg-slate-950/30 p-3">
+              <img src={logoDataUrl} alt="Logo preview" className="h-10 w-auto" />
+            </div>
+          ) : (
+            <div className="mt-1 text-xs text-slate-500">Upload an image to use as logo (no URLs).</div>
+          )}
         </div>
-        <div>
-          <label className="mb-1 block text-sm text-slate-300">Primary color</label>
-          <Input value={primary} onChange={(e) => setPrimary(e.target.value)} placeholder="#4f46e5" />
-        </div>
-        <div>
-          <label className="mb-1 block text-sm text-slate-300">Secondary color</label>
-          <Input value={secondary} onChange={(e) => setSecondary(e.target.value)} placeholder="#0ea5e9" />
-        </div>
-        <div>
-          <label className="mb-1 block text-sm text-slate-300">Privacy URL</label>
-          <Input value={privacy} onChange={(e) => setPrivacy(e.target.value)} placeholder="https://…" />
-        </div>
-        <div>
-          <label className="mb-1 block text-sm text-slate-300">Terms URL</label>
-          <Input value={terms} onChange={(e) => setTerms(e.target.value)} placeholder="https://…" />
+        <div className="sm:col-span-2">
+          <div className="mb-2 flex items-center justify-between">
+            <div className="text-sm font-semibold text-slate-200">Colors</div>
+            <button
+              type="button"
+              className="rounded-md border border-slate-800 bg-slate-900 px-3 py-1.5 text-xs text-slate-200 hover:bg-slate-800/60"
+              onClick={() => {
+                const p = getThemePreset(mode, themeId);
+                setPrimary(p.vars.brandPrimary);
+                setSecondary(p.vars.brandSecondary);
+                setBg(p.vars.appBg);
+                setSurface(p.vars.appSurface);
+                setText(p.vars.appText);
+                setMuted(p.vars.appMuted);
+                setBorder(p.vars.appBorder);
+                setSelectionBg(p.vars.brandPrimary);
+                setSelectionText(p.vars.appText);
+                setDropdownBg(p.vars.appSurface);
+                setDropdownText(p.vars.appText);
+                setBubbleMeBg(p.vars.brandPrimary);
+                setBubbleMeText("#ffffff");
+                setBubbleOtherBg(p.vars.appSurface);
+                setBubbleOtherText(p.vars.appText);
+              }}
+            >
+              Reset to theme
+            </button>
+          </div>
+          <div className="grid gap-3 sm:grid-cols-2">
+            <ColorPicker label="Primary (buttons)" value={primary} palette={COLOR_PALETTES.primary} onPick={setPrimary} />
+            <ColorPicker label="Secondary" value={secondary} palette={COLOR_PALETTES.primary} onPick={setSecondary} />
+            <ColorPicker label="Background" value={bg} palette={COLOR_PALETTES.background} onPick={setBg} />
+            <ColorPicker label="Surface" value={surface} palette={COLOR_PALETTES.surface} onPick={setSurface} />
+            <ColorPicker label="Text" value={text} palette={COLOR_PALETTES.text} onPick={setText} />
+            <ColorPicker label="Muted text" value={muted} palette={COLOR_PALETTES.muted} onPick={setMuted} />
+            <ColorPicker label="Border" value={border} palette={COLOR_PALETTES.border} onPick={setBorder} />
+            <ColorPicker
+              label="Selected text bg"
+              value={selectionBg}
+              palette={COLOR_PALETTES.primary}
+              onPick={setSelectionBg}
+            />
+            <ColorPicker
+              label="Selected text color"
+              value={selectionText}
+              palette={COLOR_PALETTES.text}
+              onPick={setSelectionText}
+            />
+            <ColorPicker label="Dropdown bg" value={dropdownBg} palette={COLOR_PALETTES.surface} onPick={setDropdownBg} />
+            <ColorPicker label="Dropdown text" value={dropdownText} palette={COLOR_PALETTES.text} onPick={setDropdownText} />
+            <ColorPicker
+              label="Chat bubble (me) bg"
+              value={bubbleMeBg}
+              palette={COLOR_PALETTES.primary}
+              onPick={setBubbleMeBg}
+            />
+            <ColorPicker
+              label="Chat bubble (me) text"
+              value={bubbleMeText}
+              palette={["#ffffff", ...COLOR_PALETTES.text]}
+              onPick={setBubbleMeText}
+            />
+            <ColorPicker
+              label="Chat bubble (other) bg"
+              value={bubbleOtherBg}
+              palette={COLOR_PALETTES.surface}
+              onPick={setBubbleOtherBg}
+            />
+            <ColorPicker
+              label="Chat bubble (other) text"
+              value={bubbleOtherText}
+              palette={COLOR_PALETTES.text}
+              onPick={setBubbleOtherText}
+            />
+          </div>
+          <div className="mt-2 text-xs text-slate-500">Privacy/terms URLs are intentionally not editable here.</div>
         </div>
         <div className="sm:col-span-2 flex items-center gap-3">
           <Button disabled={props.saving} type="submit">
@@ -274,6 +517,33 @@ function BrandingPanel(props: {
           </div>
         </div>
       </form>
+    </div>
+  );
+}
+
+function ColorPicker(props: { label: string; value: string; palette: string[]; onPick: (v: string) => void }) {
+  return (
+    <div className="rounded-lg border border-slate-800 bg-slate-950/30 p-3">
+      <div className="mb-2 flex items-center justify-between gap-2">
+        <div className="text-xs font-semibold text-slate-300">{props.label}</div>
+        <div className="font-mono text-[11px] text-slate-500">{props.value}</div>
+      </div>
+      <div className="flex flex-wrap gap-2">
+        {props.palette.map((c) => {
+          const selected = c.toLowerCase() === props.value.toLowerCase();
+          return (
+            <button
+              key={c}
+              type="button"
+              className={`h-6 w-6 rounded-full border ${selected ? "border-white" : "border-slate-700"} hover:scale-[1.03]`}
+              style={{ backgroundColor: c }}
+              onClick={() => props.onPick(c)}
+              title={c}
+              aria-label={`${props.label} ${c}`}
+            />
+          );
+        })}
+      </div>
     </div>
   );
 }
