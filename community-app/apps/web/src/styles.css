@@ -1,0 +1,98 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+:root {
+  color-scheme: dark;
+  --brand-primary: #4f46e5;
+  --brand-secondary: #111827;
+  --app-bg: #020617; /* slate-950 */
+  --app-surface: #0b1220; /* slightly lifted */
+  --app-border: #1f2937; /* slate-800 */
+  --app-text: #e2e8f0; /* slate-200 */
+  --app-muted: #94a3b8; /* slate-400 */
+}
+
+/* Brand skin (Work/Play modes + themes) */
+:root.branded[data-color-scheme="light"] {
+  color-scheme: light;
+}
+:root.branded[data-color-scheme="dark"] {
+  color-scheme: dark;
+}
+
+:root.branded body {
+  background-color: var(--app-bg);
+  color: var(--app-text);
+}
+
+:root.branded ::selection {
+  background: var(--selection-bg);
+  color: var(--selection-text);
+}
+
+:root.branded select,
+:root.branded option {
+  background-color: var(--dropdown-bg);
+  color: var(--dropdown-text);
+}
+
+:root.branded input,
+:root.branded textarea {
+  caret-color: var(--brand-primary);
+}
+
+:root.branded .bg-slate-950\/80 {
+  background-color: color-mix(in srgb, var(--app-bg) 90%, transparent) !important;
+}
+:root.branded .bg-slate-950\/60 {
+  background-color: color-mix(in srgb, var(--app-bg) 75%, transparent) !important;
+}
+:root.branded .bg-slate-950\/30 {
+  background-color: color-mix(in srgb, var(--app-bg) 55%, transparent) !important;
+}
+
+:root.branded .bg-slate-900 {
+  background-color: var(--app-surface) !important;
+}
+:root.branded .bg-slate-900\/40 {
+  background-color: color-mix(in srgb, var(--app-surface) 85%, transparent) !important;
+}
+:root.branded .bg-slate-900\/30 {
+  background-color: color-mix(in srgb, var(--app-surface) 75%, transparent) !important;
+}
+:root.branded .bg-slate-800 {
+  background-color: color-mix(in srgb, var(--app-surface) 88%, #ffffff 12%) !important;
+}
+:root.branded .bg-slate-800\/60 {
+  background-color: color-mix(in srgb, var(--app-surface) 80%, transparent) !important;
+}
+:root.branded .bg-slate-700 {
+  background-color: color-mix(in srgb, var(--app-surface) 78%, #ffffff 22%) !important;
+}
+:root.branded .bg-slate-600 {
+  background-color: color-mix(in srgb, var(--app-surface) 70%, #ffffff 30%) !important;
+}
+
+:root.branded .border-slate-800 {
+  border-color: var(--app-border) !important;
+}
+:root.branded .border-slate-700 {
+  border-color: color-mix(in srgb, var(--app-border) 70%, #ffffff 30%) !important;
+}
+
+:root.branded .text-slate-500 {
+  color: color-mix(in srgb, var(--app-muted) 70%, var(--app-text) 30%) !important;
+}
+:root.branded .text-slate-400 {
+  color: var(--app-muted) !important;
+}
+:root.branded .text-slate-300 {
+  color: color-mix(in srgb, var(--app-muted) 30%, var(--app-text) 70%) !important;
+}
+:root.branded .text-slate-200 {
+  color: var(--app-text) !important;
+}
+:root.branded .text-slate-100 {
+  color: color-mix(in srgb, var(--app-text) 90%, #ffffff 10%) !important;
+}

@@ -1,0 +1,129 @@
+export type Org = {
+  id: string;
+  slug: string;
+  name: string;
+  created_at: string;
+};
+
+export type OrgsListResponse = { organizations: Org[] };
+
+export type CreateOrgRequest = { name: string; slug: string };
+
+export type Channel = {
+  id: string;
+  organization_id: string;
+  name: string;
+  kind: string;
+  created_by?: string | null;
+  created_at: string;
+};
+
+export type ChannelsResponse = { channels: Channel[] };
+
+export type Message = {
+  id: string;
+  organization_id: string;
+  channel_id: string;
+  sender_id: string;
+  body: string | null;
+  kind: string;
+  attachments?: MessageAttachment[];
+  reactions?: MessageReaction[];
+  created_at: string;
+  edited_at?: string | null;
+  deleted_at?: string | null;
+};
+
+export type ListMessagesResponse = { messages: Message[]; next_cursor?: string | null };
+
+export type MessageAttachment = {
+  id: string;
+  filename: string;
+  content_type?: string | null;
+  size_bytes: number;
+  data_url: string;
+  created_at: string;
+};
+
+export type MessageReaction = {
+  emoji: string;
+  count: number;
+  reacted_by_me: boolean;
+};
+
+export type MediaRoom = {
+  id: string;
+  organization_id: string;
+  channel_id?: string | null;
+  livekit_room_name: string;
+  kind: string;
+  name: string;
+  created_by: string;
+  created_at: string;
+};
+
+export type TokenResponse = { token: string; livekit_url: string };
+
+export type Member = { user_id: string; email: string; display_name: string; role: string; joined_at: string };
+export type MembersResponse = { members: Member[] };
+
+export type InviteResponse = { code: string; expires_at?: string | null; max_uses?: number | null };
+
+export type Role = { id: string; name: string; permissions: number; created_at: string };
+export type RolesResponse = { roles: Role[] };
+
+export type Branding = {
+  organization_id: string;
+  app_name: string;
+  theme: "dark" | "light";
+  ui_mode?: "work" | "play";
+  ui_theme?: string;
+  logo_url?: string | null;
+  icon_url?: string | null;
+  primary_color?: string | null;
+  secondary_color?: string | null;
+  bg_color?: string | null;
+  surface_color?: string | null;
+  text_color?: string | null;
+  muted_color?: string | null;
+  border_color?: string | null;
+  selection_bg?: string | null;
+  selection_text?: string | null;
+  dropdown_bg?: string | null;
+  dropdown_text?: string | null;
+  chat_bubble_me_bg?: string | null;
+  chat_bubble_me_text?: string | null;
+  chat_bubble_other_bg?: string | null;
+  chat_bubble_other_text?: string | null;
+  privacy_url?: string | null;
+  terms_url?: string | null;
+  updated_at: string;
+};
+
+export type AuditLogEntry = {
+  id: string;
+  actor?: { id: string; email: string; display_name: string } | null;
+  action: string;
+  target_type?: string | null;
+  target_id?: string | null;
+  metadata: unknown;
+  created_at: string;
+};
+export type AuditLogsResponse = { entries: AuditLogEntry[] };
+
+export type UserSummary = { id: string; email: string; display_name: string };
+
+export type FriendRequest = {
+  id: string;
+  requester: UserSummary;
+  addressee: UserSummary;
+  status: string;
+  created_at: string;
+  responded_at?: string | null;
+};
+
+export type FriendRequestsResponse = { requests: FriendRequest[] };
+export type FriendsResponse = { friends: UserSummary[] };
+
+export type DmThread = { channel_id: string; peer: UserSummary };
+export type DmsResponse = { dms: DmThread[] };
