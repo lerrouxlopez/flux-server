@@ -17,7 +17,6 @@ mod runtime;
 
 #[derive(Clone)]
 struct AppState {
-    app_env: String,
     pool: PgPool,
     redis: redis::aio::ConnectionManager,
     nats: async_nats::Client,
@@ -48,7 +47,6 @@ async fn main() -> anyhow::Result<()> {
     rt.spawn_nats_fanout();
 
     let state = AppState {
-        app_env: cfg.app_env.clone(),
         pool,
         redis,
         nats,
@@ -80,13 +78,11 @@ async fn ws_handler(
     Query(q): Query<WsQuery>,
     ws: WebSocketUpgrade,
 ) -> impl IntoResponse {
-    let token = bearer_token(&headers).map(|s| s.to_string()).or_else(|| {
-        if state.app_env == "local" {
-            q.access_token.clone().or(q.token.clone())
-        } else {
-            None
-        }
-    });
+    // Browsers can't reliably set Authorization headers for WebSocket connections.
+    // Accept the token via query param for all environments, and prefer Authorization when present.
+    let token = bearer_token(&headers)
+        .map(|s| s.to_string())
+        .or_else(|| q.access_token.clone().or(q.token.clone()));
 
     let Some(token) = token else {
         return ApiError::new(ApiErrorCode::Unauthenticated).into_response();
