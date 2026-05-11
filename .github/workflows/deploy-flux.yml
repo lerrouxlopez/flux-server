@@ -62,6 +62,8 @@ jobs:
 
       - name: Build and push (web)
         uses: docker/build-push-action@v6
+        env:
+          BUILDKIT_PROGRESS: plain
         with:
           context: community-app
           file: community-app/Dockerfile.web-prod
@@ -92,4 +94,3 @@ jobs:
             docker compose pull
             docker compose up -d
             docker image prune -f
-
