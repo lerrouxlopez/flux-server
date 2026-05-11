@@ -10,7 +10,15 @@ COPY apps/web/package.json apps/web/package-lock.json ./apps/web/
 RUN cd apps/web && npm ci --include=dev
 
 COPY apps/web ./apps/web
-RUN cd apps/web && npx tsc -b && npx vite build
+RUN set -eux; \
+    cd apps/web; \
+    node -v; \
+    npm -v; \
+    command -v npx || true; \
+    (npx --version || true); \
+    ls -la node_modules/.bin | head -n 50; \
+    ./node_modules/.bin/tsc -b; \
+    ./node_modules/.bin/vite build
 
 FROM nginx:1.27-alpine
 COPY --from=builder /app/apps/web/dist /usr/share/nginx/html
