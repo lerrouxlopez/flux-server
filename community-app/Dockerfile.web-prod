@@ -7,7 +7,7 @@ ENV NODE_ENV=development
 ENV NPM_CONFIG_PRODUCTION=false
 
 COPY apps/web/package.json apps/web/package-lock.json ./apps/web/
-RUN cd apps/web && npm ci
+RUN cd apps/web && npm ci --include=dev
 
 COPY apps/web ./apps/web
 RUN cd apps/web && npm run build
