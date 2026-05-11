@@ -2,20 +2,15 @@ use async_nats::jetstream::{self, consumer, stream};
 
 #[derive(Debug, Clone)]
 pub struct JetStreamConfig {
-    pub notifications_stream: String,
     pub audit_stream: String,
-    pub search_stream: String,
-    pub email_stream: String,
     pub cleanup_stream: String,
 }
 
 impl Default for JetStreamConfig {
     fn default() -> Self {
         Self {
-            notifications_stream: "notifications".to_string(),
-            audit_stream: "audit".to_string(),
-            search_stream: "search".to_string(),
-            email_stream: "email".to_string(),
+            // Single stream for all org events to avoid subject overlap errors.
+            audit_stream: "events".to_string(),
             cleanup_stream: "cleanup".to_string(),
         }
     }
@@ -26,20 +21,9 @@ pub fn context(client: async_nats::Client) -> jetstream::Context {
 }
 
 pub async fn ensure_streams(js: &jetstream::Context, cfg: &JetStreamConfig) -> anyhow::Result<()> {
-    ensure_stream(
-        js,
-        &cfg.notifications_stream,
-        vec!["org.*.user.*.notification.created"],
-    )
-    .await?;
-    ensure_stream(js, &cfg.audit_stream, vec!["org.*.>"]).await?;
-    ensure_stream(js, &cfg.search_stream, vec!["org.*.channel.*.message.*"]).await?;
-    ensure_stream(
-        js,
-        &cfg.email_stream,
-        vec!["org.*.user.*.notification.created"],
-    )
-    .await?;
+    // JetStream does not allow overlapping subjects between streams.
+    // Keep a single org stream and use consumer filter subjects per use-case.
+    ensure_stream(js, &cfg.audit_stream, vec!["org.>"]).await?;
     ensure_stream(js, &cfg.cleanup_stream, vec!["cleanup.>"]).await?;
     Ok(())
 }
