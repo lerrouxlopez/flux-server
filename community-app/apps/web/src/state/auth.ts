@@ -23,6 +23,8 @@ type AuthState = {
 const LS_ACCESS = "access_token";
 const LS_REFRESH = "refresh_token";
 
+const BACKEND_ORIGIN = (import.meta as any).env?.VITE_BACKEND_ORIGIN as string | undefined;
+
 export const useAuthStore = create<AuthState>((set, get) => ({
   accessToken: null,
   refreshToken: null,
@@ -40,7 +42,8 @@ export const useAuthStore = create<AuthState>((set, get) => ({
   logout: async () => {
     const refreshToken = get().refreshToken ?? localStorage.getItem(LS_REFRESH);
     if (refreshToken) {
-      await fetch("/auth/logout", {
+      const url = `${BACKEND_ORIGIN ?? ""}/auth/logout`;
+      await fetch(url, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ refresh_token: refreshToken }),
@@ -60,7 +63,8 @@ export const useAuthStore = create<AuthState>((set, get) => ({
       set({ user: null });
       return;
     }
-    const res = await fetch("/auth/me", {
+    const url = `${BACKEND_ORIGIN ?? ""}/auth/me`;
+    const res = await fetch(url, {
       headers: { Authorization: `Bearer ${accessToken}` },
     });
     if (!res.ok) {

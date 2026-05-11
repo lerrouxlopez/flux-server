@@ -1,6 +1,8 @@
 import { create } from "zustand";
 import { getThemePreset } from "../branding/presets";
 
+const BACKEND_ORIGIN = (import.meta as any).env?.VITE_BACKEND_ORIGIN as string | undefined;
+
 export type PublicBranding = {
   organization_id: string;
   app_name: string;
@@ -43,7 +45,8 @@ export const useBrandingStore = create<BrandingState>((set) => ({
     applyBrandingToDom(branding);
   },
   loadBranding: async (host) => {
-    const res = await fetch(`/public/branding?host=${encodeURIComponent(host)}`);
+    const url = `${BACKEND_ORIGIN ?? ""}/public/branding?host=${encodeURIComponent(host)}`;
+    const res = await fetch(url);
     if (!res.ok) {
       set({ branding: null });
       return;
@@ -54,7 +57,8 @@ export const useBrandingStore = create<BrandingState>((set) => ({
   },
   loadOrgBranding: async (orgId) => {
     const token = localStorage.getItem("access_token");
-    const res = await fetch(`/orgs/${orgId}/branding`, {
+    const url = `${BACKEND_ORIGIN ?? ""}/orgs/${orgId}/branding`;
+    const res = await fetch(url, {
       headers: token ? { Authorization: `Bearer ${token}` } : undefined,
     });
     if (!res.ok) return;
