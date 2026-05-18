@@ -28,3 +28,4 @@ tracing.workspace = true
 uuid.workspace = true
 dashmap = "6"
 bytes = "1"
+metrics.workspace = true

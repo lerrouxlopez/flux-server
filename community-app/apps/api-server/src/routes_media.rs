@@ -315,6 +315,19 @@ async fn join_room(
         _ => return util::api_error(ApiErrorCode::ValidationError),
     };
 
+    let room_kind_label = match room.kind {
+        domain::MediaRoomKind::Voice => "voice",
+        domain::MediaRoomKind::Meeting => "meeting",
+        domain::MediaRoomKind::Stage => "stage",
+    };
+
+    metrics::counter!(
+        "media_join_requests_total",
+        "intent" => req.intent.trim().to_lowercase(),
+        "room_kind" => room_kind_label
+    )
+    .increment(1);
+
     let livekit = media::LiveKitConfig {
         internal_url: state.livekit_url_internal.clone(),
         public_url: state.livekit_url_public.clone(),
@@ -338,13 +351,16 @@ async fn join_room(
         Ok(r) => r,
         Err(e) => {
             if e.to_string().contains("permission denied") {
+                metrics::counter!("media_join_denied_total").increment(1);
                 return util::api_error(ApiErrorCode::PermissionDenied);
             }
+            metrics::counter!("media_join_errors_total").increment(1);
             return util::api_error(ApiErrorCode::InternalError);
         }
     };
 
     let (resp, meta) = joined;
+    metrics::counter!("media_join_success_total").increment(1);
     let now = time::OffsetDateTime::now_utc();
 
     // Publish typed media events (best-effort, post-commit).

@@ -273,6 +273,7 @@ async fn join_room_internal(
     if let Some(existing) =
         find_reusable_participant(pool, session.id, user_id, device_id, now, reconnect_window).await?
     {
+        metrics::counter!("media_reconnect_reuse_total").increment(1);
         tracing::info!(
             organization_id=%room.organization_id,
             room_id=%room.id,
@@ -1119,7 +1120,15 @@ pub fn issue_livekit_token(
         .with_identity(&identity)
         .with_grants(grants);
     token = token.with_ttl(std::time::Duration::from_secs(TOKEN_TTL_SECS));
-    let jwt = token.to_jwt().context("failed to create livekit jwt")?;
+    let jwt = match token.to_jwt() {
+        Ok(v) => v,
+        Err(e) => {
+            metrics::counter!("livekit_token_issuance_errors_total").increment(1);
+            return Err(anyhow::Error::new(e).context("failed to create livekit jwt"));
+        }
+    };
+
+    metrics::counter!("livekit_tokens_issued_total").increment(1);
 
     Ok(TokenResponse {
         token: jwt,
@@ -1204,6 +1213,41 @@ pub async fn remove_participant(
             room: room_name.to_string(),
             identity: identity.to_string(),
         })
+        .send()
+        .await?
+        .error_for_status()?;
+
+    Ok(())
+}
+
+#[derive(Debug, Deserialize, Serialize)]
+struct ListRoomsRequestBody {
+    names: Vec<String>,
+}
+
+pub async fn roomservice_health_check(cfg: &LiveKitConfig) -> anyhow::Result<()> {
+    // Hit LiveKit RoomService (Twirp) with server auth. Any 2xx indicates health.
+    let grants = VideoGrants {
+        room_admin: true,
+        ..Default::default()
+    };
+
+    let mut token = AccessToken::with_api_key(&cfg.api_key, &cfg.api_secret)
+        .with_identity("server")
+        .with_grants(grants);
+    token = token.with_ttl(std::time::Duration::from_secs(30));
+    let jwt = token.to_jwt().context("failed to create livekit jwt")?;
+
+    let url = format!(
+        "{}/twirp/livekit.RoomService/ListRooms",
+        cfg.internal_url.trim_end_matches('/')
+    );
+
+    let client = reqwest::Client::new();
+    let _ = client
+        .post(url)
+        .bearer_auth(jwt)
+        .json(&ListRoomsRequestBody { names: Vec::new() })
         .send()
         .await?
         .error_for_status()?;

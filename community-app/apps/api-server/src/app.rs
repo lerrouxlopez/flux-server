@@ -39,6 +39,16 @@ pub fn build_app(cfg: &config::AppConfig, state: AppState) -> Router {
         .merge(crate::routes_threads::router())
         .merge(crate::routes_experience::router())
         .merge(crate::routes_notifications::router())
+        .route(
+            "/metrics",
+            get(|| async move {
+                if let Some(h) = telemetry::prometheus_handle() {
+                    (StatusCode::OK, h.render())
+                } else {
+                    (StatusCode::SERVICE_UNAVAILABLE, "metrics not initialized".to_string())
+                }
+            }),
+        )
         .route("/healthz", get(|| async { "ok" }))
         .route("/readyz", get(crate::readyz))
         .layer(
@@ -74,6 +84,13 @@ pub fn build_app(cfg: &config::AppConfig, state: AppState) -> Router {
                              span: &Span| {
                                 span.record("status", res.status().as_u16());
                                 span.record("latency_ms", latency.as_millis() as u64);
+
+                                // Metrics (low-cardinality labels only).
+                                let status = res.status().as_u16().to_string();
+                                metrics::counter!("http_server_requests_total", "status" => status).increment(1);
+                                metrics::histogram!("http_server_request_duration_seconds")
+                                    .record(latency.as_secs_f64());
+
                                 tracing::info!(
                                     parent: span,
                                     status = %res.status().as_u16(),

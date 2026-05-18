@@ -33,3 +33,4 @@ validator.workspace = true
 auth = { path = "../../crates/auth" }
 api = { path = "../../crates/api" }
 http-body-util = "0.1"
+metrics.workspace = true
