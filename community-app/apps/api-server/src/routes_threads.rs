@@ -536,7 +536,7 @@ async fn pin_message(
     }
 
     // Validate message belongs to channel + org.
-    let ok = sqlx::query_scalar::<_, i64>(
+    let ok_res = sqlx::query_scalar::<_, i64>(
         r#"
         select 1::bigint
         from messages
@@ -547,9 +547,12 @@ async fn pin_message(
     .bind(channel_id)
     .bind(org_id)
     .fetch_optional(&state.pool)
-    .await
-    .map_err(|_| util::api_error(ApiErrorCode::InternalError))?
-    .is_some();
+    .await;
+
+    let ok = match ok_res {
+        Ok(v) => v.is_some(),
+        Err(_) => return util::api_error(ApiErrorCode::InternalError),
+    };
     if !ok {
         return util::api_error(ApiErrorCode::NotFound);
     }

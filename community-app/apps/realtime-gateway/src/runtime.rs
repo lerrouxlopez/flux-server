@@ -273,6 +273,19 @@ impl Hub {
             | ServerEvent::MediaParticipantUpdated { room_id, .. } => {
                 self.broadcast_to_media_room(*room_id, evt);
             }
+            ServerEvent::ThreadReplyCreated {
+                organization_id,
+                channel_id,
+                ..
+            }
+            | ServerEvent::ChannelPinsChanged {
+                organization_id,
+                channel_id,
+                ..
+            } => {
+                self.broadcast_to_channel(*channel_id, evt);
+                self.broadcast_to_org(*organization_id, evt);
+            }
         }
     }
 
