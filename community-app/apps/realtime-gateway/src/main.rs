@@ -12,8 +12,7 @@ use tower_http::trace::TraceLayer;
 use tracing::{info, warn};
 use uuid::Uuid;
 
-mod protocol;
-mod runtime;
+use realtime_gateway::{protocol, runtime};
 
 #[derive(Clone)]
 struct AppState {

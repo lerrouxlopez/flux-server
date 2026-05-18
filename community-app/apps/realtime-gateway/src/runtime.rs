@@ -558,7 +558,7 @@ async fn emit_typing_stopped(
     hub.broadcast_to_channel(channel_id, &evt);
 }
 
-async fn ensure_channel_access(
+pub(crate) async fn ensure_channel_access(
     pool: &PgPool,
     user_id: Uuid,
     org_ids: &[Uuid],

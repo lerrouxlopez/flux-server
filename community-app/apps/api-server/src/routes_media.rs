@@ -61,6 +61,27 @@ async fn create_media_room(
         return util::api_error(ApiErrorCode::PermissionDenied);
     }
 
+    if let Some(channel_id) = req.channel_id {
+        // Ensure the channel belongs to this org and the user can access it.
+        let can_access = match util::can_access_channel(&state.pool, auth.user_id, channel_id).await {
+            Ok(v) => v,
+            Err(e) => return e,
+        };
+        if !can_access {
+            return util::api_error(ApiErrorCode::PermissionDenied);
+        }
+        let ch_org: Option<Uuid> =
+            sqlx::query_scalar(r#"select organization_id from channels where id = $1"#)
+                .bind(channel_id)
+                .fetch_optional(&state.pool)
+                .await
+                .ok()
+                .flatten();
+        if ch_org != Some(org_id) {
+            return util::api_error(ApiErrorCode::PermissionDenied);
+        }
+    }
+
     let name = req.name.trim().to_string();
     if name.is_empty() {
         return util::api_error(ApiErrorCode::ValidationError);

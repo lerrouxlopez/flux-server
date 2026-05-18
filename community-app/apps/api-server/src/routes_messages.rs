@@ -139,13 +139,15 @@ async fn list_messages(
             r#"
             select id, organization_id, channel_id, sender_id, thread_id, body, kind, created_at, edited_at, deleted_at
             from messages
-            where channel_id = $1
+            where organization_id = $1
+              and channel_id = $2
               and deleted_at is null
-              and (created_at, id) < ($2, $3)
+              and (created_at, id) < ($3, $4)
             order by created_at desc, id desc
-            limit $4
+            limit $5
             "#,
         )
+        .bind(org_id)
         .bind(channel_id)
         .bind(created_at)
         .bind(id)
@@ -157,12 +159,14 @@ async fn list_messages(
             r#"
             select id, organization_id, channel_id, sender_id, thread_id, body, kind, created_at, edited_at, deleted_at
             from messages
-            where channel_id = $1
+            where organization_id = $1
+              and channel_id = $2
               and deleted_at is null
             order by created_at desc, id desc
-            limit $2
+            limit $3
             "#,
         )
+        .bind(org_id)
         .bind(channel_id)
         .bind(limit)
         .fetch_all(&state.pool)
