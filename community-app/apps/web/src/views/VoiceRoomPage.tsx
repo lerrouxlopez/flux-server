@@ -22,6 +22,15 @@ export function VoiceRoomPage() {
   const [lkError, setLkError] = useState<string | null>(null);
   const [disconnectReason, setDisconnectReason] = useState<string | null>(null);
 
+  const deviceId = (() => {
+    const key = "device_id";
+    const existing = localStorage.getItem(key);
+    if (existing) return existing;
+    const id = typeof crypto !== "undefined" && "randomUUID" in crypto ? crypto.randomUUID() : `dev-${Math.random().toString(16).slice(2)}`;
+    localStorage.setItem(key, id);
+    return id;
+  })();
+
   const room = useQuery({
     enabled: !!room_id,
     queryKey: ["mediaRoom", room_id],
@@ -36,6 +45,7 @@ export function VoiceRoomPage() {
         method: "POST",
         body: JSON.stringify({
           intent: room.data?.kind === "stage" ? "stage_viewer" : room.data?.kind === "voice" ? "voice_only" : "video",
+          device_id: deviceId,
         }),
       }),
   });

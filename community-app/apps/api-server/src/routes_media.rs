@@ -278,6 +278,7 @@ async fn list_participants(
 #[derive(Debug, Deserialize)]
 struct JoinRoomRequest {
     intent: String,
+    device_id: String,
 }
 
 async fn join_room(
@@ -325,7 +326,10 @@ async fn join_room(
         &room,
         auth.user_id,
         perms,
-        media::JoinRequest { intent },
+        media::JoinRequest {
+            intent,
+            device_id: req.device_id,
+        },
     )
     .await
     {
@@ -366,10 +370,16 @@ async fn get_session_status(
     (StatusCode::OK, Json(status)).into_response()
 }
 
+#[derive(Debug, Deserialize)]
+struct HeartbeatBody {
+    device_id: Option<String>,
+}
+
 async fn heartbeat(
     State(state): State<AppState>,
     Extension(auth): Extension<AuthContext>,
     Path(session_id): Path<Uuid>,
+    body: Option<Json<HeartbeatBody>>,
 ) -> impl IntoResponse {
     let Some(status) = (match media::get_session_status(&state.pool, session_id).await {
         Ok(v) => v,
@@ -387,7 +397,10 @@ async fn heartbeat(
         return util::api_error(ApiErrorCode::PermissionDenied);
     }
 
-    let ok = match media::heartbeat(&state.pool, session_id, auth.user_id).await {
+    let ok = match body.and_then(|Json(b)| b.device_id) {
+        Some(device_id) => media::heartbeat_device(&state.pool, session_id, auth.user_id, &device_id).await,
+        None => media::heartbeat(&state.pool, session_id, auth.user_id).await,
+    } {
         Ok(v) => v,
         Err(_) => return util::api_error(ApiErrorCode::InternalError),
     };
@@ -398,10 +411,16 @@ async fn heartbeat(
     (StatusCode::OK, Json(serde_json::json!({"status":"ok"}))).into_response()
 }
 
+#[derive(Debug, Deserialize)]
+struct LeaveBody {
+    device_id: Option<String>,
+}
+
 async fn leave(
     State(state): State<AppState>,
     Extension(auth): Extension<AuthContext>,
     Path(session_id): Path<Uuid>,
+    body: Option<Json<LeaveBody>>,
 ) -> impl IntoResponse {
     let Some(status) = (match media::get_session_status(&state.pool, session_id).await {
         Ok(v) => v,
@@ -419,19 +438,17 @@ async fn leave(
         return util::api_error(ApiErrorCode::PermissionDenied);
     }
 
-    let ok = match media::leave(
-        &state.pool,
-        &media::LiveKitConfig {
-            internal_url: state.livekit_url_internal.clone(),
-            public_url: state.livekit_url_public.clone(),
-            api_key: state.livekit_api_key.clone(),
-            api_secret: state.livekit_api_secret.clone(),
-        },
-        session_id,
-        auth.user_id,
-    )
-    .await
-    {
+    let livekit = media::LiveKitConfig {
+        internal_url: state.livekit_url_internal.clone(),
+        public_url: state.livekit_url_public.clone(),
+        api_key: state.livekit_api_key.clone(),
+        api_secret: state.livekit_api_secret.clone(),
+    };
+
+    let ok = match body.and_then(|Json(b)| b.device_id) {
+        Some(device_id) => media::leave_device(&state.pool, &livekit, session_id, auth.user_id, &device_id).await,
+        None => media::leave(&state.pool, &livekit, session_id, auth.user_id).await,
+    } {
         Ok(v) => v,
         Err(_) => return util::api_error(ApiErrorCode::InternalError),
     };
