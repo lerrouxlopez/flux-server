@@ -400,7 +400,8 @@ async fn heartbeat(
     let ok = match body.and_then(|Json(b)| b.device_id) {
         Some(device_id) => media::heartbeat_device(&state.pool, session_id, auth.user_id, &device_id).await,
         None => media::heartbeat(&state.pool, session_id, auth.user_id).await,
-    } {
+    };
+    let ok = match ok {
         Ok(v) => v,
         Err(_) => return util::api_error(ApiErrorCode::InternalError),
     };
@@ -448,7 +449,8 @@ async fn leave(
     let ok = match body.and_then(|Json(b)| b.device_id) {
         Some(device_id) => media::leave_device(&state.pool, &livekit, session_id, auth.user_id, &device_id).await,
         None => media::leave(&state.pool, &livekit, session_id, auth.user_id).await,
-    } {
+    };
+    let ok = match ok {
         Ok(v) => v,
         Err(_) => return util::api_error(ApiErrorCode::InternalError),
     };
