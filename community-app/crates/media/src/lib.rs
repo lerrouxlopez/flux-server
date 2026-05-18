@@ -514,7 +514,6 @@ pub async fn cleanup_stale_participants(
 }
 
 #[derive(Debug, Clone, Copy)]
-#[derive(Debug, Clone, Copy)]
 pub struct RequestedCapabilities {
     pub subscribe: bool,
     pub publish_audio: bool,
