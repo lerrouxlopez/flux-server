@@ -1,4 +1,4 @@
-import { useMemo } from "react";
+import { useMemo, useState } from "react";
 import { Link } from "react-router-dom";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { apiFetch } from "../api/client";
@@ -11,8 +11,10 @@ import type {
   Org,
 } from "../api/types";
 import { useAuthStore } from "../state/auth";
+import { useBrandingStore } from "../state/branding";
 import { Button } from "./Button";
 import { Avatar } from "./Avatar";
+import { Input } from "./Input";
 
 type PresenceStatus = "online" | "offline";
 
@@ -24,6 +26,10 @@ export function OrgSidebar(props: {
 }) {
   const qc = useQueryClient();
   const me = useAuthStore((s) => s.user);
+  const uiMode = useBrandingStore((s) => s.branding?.ui_mode ?? "work");
+
+  const [q, setQ] = useState("");
+  const [showAllMembers, setShowAllMembers] = useState(false);
 
   const channels = useQuery({
     queryKey: ["channels", props.org.id],
@@ -88,6 +94,26 @@ export function OrgSidebar(props: {
     return (members.data?.members ?? []).filter((m) => presence[m.user_id] === "online").length;
   }, [members.data, props.presenceByUser]);
 
+  const filteredChannels = useMemo(() => {
+    const all = channels.data?.channels ?? [];
+    const query = q.trim().toLowerCase();
+    if (!query) return all;
+    return all.filter((c) => c.name.toLowerCase().includes(query));
+  }, [channels.data, q]);
+
+  const filteredDms = useMemo(() => {
+    const all = dms.data?.dms ?? [];
+    const query = q.trim().toLowerCase();
+    if (!query) return all;
+    return all.filter((d) => d.peer.display_name.toLowerCase().includes(query));
+  }, [dms.data, q]);
+
+  const visibleMembers = useMemo(() => {
+    const all = members.data?.members ?? [];
+    if (uiMode === "work" && !showAllMembers) return all.slice(0, 6);
+    return all.slice(0, 12);
+  }, [members.data, showAllMembers, uiMode]);
+
   return (
     <aside className="rounded-xl border border-slate-800 bg-slate-900/30 p-3">
       <div className="flex items-center justify-between gap-2 px-2 py-2">
@@ -113,10 +139,32 @@ export function OrgSidebar(props: {
         </Link>
       </div>
 
+      {uiMode === "work" ? (
+        <div className="mt-3 px-2">
+          <Input value={q} onChange={(e) => setQ(e.target.value)} placeholder="Search channels and chats..." />
+        </div>
+      ) : (
+        <div className="mt-3 grid grid-cols-2 gap-2 px-2">
+          <button
+            type="button"
+            className="rounded-md border border-slate-800 bg-slate-900 px-2 py-2 text-xs text-slate-200 hover:bg-slate-800/60"
+            onClick={props.onCreateRoomClick}
+          >
+            + New room
+          </button>
+          <Link
+            to={`/app/${props.org.slug}`}
+            className="rounded-md border border-slate-800 bg-slate-900 px-2 py-2 text-center text-xs text-slate-200 hover:bg-slate-800/60"
+          >
+            Quick jump
+          </Link>
+        </div>
+      )}
+
       <div className="mt-3">
         <div className="px-2 text-xs font-semibold text-slate-400">Channels</div>
         <div className="mt-2 space-y-1">
-          {(channels.data?.channels ?? []).map((c) => {
+          {filteredChannels.map((c) => {
             const active = c.id === props.activeChannelId;
             return (
               <Link
@@ -134,13 +182,16 @@ export function OrgSidebar(props: {
               </Link>
             );
           })}
+          {uiMode === "work" && q.trim() && !filteredChannels.length ? (
+            <div className="px-2 text-xs text-slate-500">No matching channels.</div>
+          ) : null}
         </div>
       </div>
 
       <div className="mt-3 border-t border-slate-800 pt-3">
         <div className="px-2 text-xs font-semibold text-slate-400">Chats</div>
         <div className="mt-2 space-y-1">
-          {(dms.data?.dms ?? []).map((d) => {
+          {filteredDms.map((d) => {
             const active = d.channel_id === props.activeChannelId;
             return (
               <Link
@@ -162,7 +213,12 @@ export function OrgSidebar(props: {
               </Link>
             );
           })}
-          {!(dms.data?.dms ?? []).length ? <div className="px-2 text-sm text-slate-400">No chats yet.</div> : null}
+          {uiMode === "work" && q.trim() && !filteredDms.length ? (
+            <div className="px-2 text-xs text-slate-500">No matching chats.</div>
+          ) : null}
+          {!(dms.data?.dms ?? []).length && !q.trim() ? (
+            <div className="px-2 text-sm text-slate-400">No chats yet.</div>
+          ) : null}
         </div>
       </div>
 
@@ -171,7 +227,7 @@ export function OrgSidebar(props: {
           Members {props.presenceByUser ? (members.isLoading ? "" : `(${onlineCount} online)`) : ""}
         </div>
         <div className="mt-2 space-y-1">
-          {(members.data?.members ?? []).slice(0, 12).map((m) => {
+          {visibleMembers.map((m) => {
             const presence = props.presenceByUser ?? {};
             const online = presence[m.user_id] === "online";
             const isMe = m.user_id === me?.id;
@@ -230,6 +286,17 @@ export function OrgSidebar(props: {
             );
           })}
         </div>
+        {uiMode === "work" && (members.data?.members ?? []).length > 6 ? (
+          <div className="mt-2 px-2">
+            <button
+              type="button"
+              className="text-xs text-slate-400 hover:text-slate-200"
+              onClick={() => setShowAllMembers((v) => !v)}
+            >
+              {showAllMembers ? "Show less" : "Show more"}
+            </button>
+          </div>
+        ) : null}
         {openDm.data?.channel_id ? (
           <div className="mt-2 px-2">
             <Link className="text-xs text-indigo-400 hover:underline" to={`/app/${props.org.slug}/channels/${openDm.data.channel_id}`}>

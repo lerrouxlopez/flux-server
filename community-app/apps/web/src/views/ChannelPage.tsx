@@ -32,6 +32,7 @@ export function ChannelPage() {
   const qc = useQueryClient();
   const me = useAuthStore((s) => s.user);
   const loadOrgBranding = useBrandingStore((s) => s.loadOrgBranding);
+  const uiMode = useBrandingStore((s) => s.branding?.ui_mode ?? "work");
 
   const [text, setText] = useState("");
   const [connected, setConnected] = useState(false);
@@ -47,6 +48,9 @@ export function ChannelPage() {
   const textAreaRef = useRef<HTMLTextAreaElement | null>(null);
   const [typingByUser, setTypingByUser] = useState<Record<string, number>>({});
   const [presenceByUser, setPresenceByUser] = useState<Record<string, PresenceStatus>>({});
+  const [workSearchOpen, setWorkSearchOpen] = useState(false);
+  const [workSearch, setWorkSearch] = useState("");
+  const [workPane, setWorkPane] = useState<"search" | "pins" | "threads" | null>(null);
 
   const QUICK_REACTIONS = useMemo(
     () => ["\u{1F44D}", "\u{2764}\u{FE0F}", "\u{1F602}", "\u{1F62E}", "\u{1F622}", "\u{1F621}"],
@@ -401,6 +405,14 @@ export function ChannelPage() {
     return [...list].reverse();
   }, [messages.data]);
 
+  const visibleMessages = useMemo(() => {
+    if (uiMode !== "work") return orderedMessages;
+    if (workPane !== "search") return orderedMessages;
+    const q = workSearch.trim().toLowerCase();
+    if (!q) return orderedMessages;
+    return orderedMessages.filter((m) => (m.body ?? "").toLowerCase().includes(q));
+  }, [orderedMessages, uiMode, workPane, workSearch]);
+
   const channelTitle = channel?.kind === "dm" ? `Direct message` : `# ${channel?.name ?? ""}`;
 
   if (orgs.isLoading) return <div className="text-slate-300">Loading...</div>;
@@ -451,8 +463,66 @@ export function ChannelPage() {
                 </Button>
               </div>
             )}
+            {uiMode === "work" ? (
+              <div className="ml-2 flex items-center gap-1">
+                <button
+                  className={`rounded-md px-2 py-1 text-xs ${
+                    workPane === "search" ? "bg-slate-800 text-white" : "bg-slate-900 text-slate-200 hover:bg-slate-800"
+                  }`}
+                  onClick={() => {
+                    if (workPane === "search") {
+                      setWorkSearch("");
+                      setWorkPane(null);
+                      setWorkSearchOpen(false);
+                      return;
+                    }
+                    setWorkSearchOpen(true);
+                    setWorkPane("search");
+                  }}
+                  type="button"
+                  title="Search"
+                >
+                  Search
+                </button>
+                <button
+                  className={`rounded-md px-2 py-1 text-xs ${
+                    workPane === "pins" ? "bg-slate-800 text-white" : "bg-slate-900 text-slate-200 hover:bg-slate-800"
+                  }`}
+                  onClick={() => setWorkPane((p) => (p === "pins" ? null : "pins"))}
+                  type="button"
+                  title="Pins"
+                >
+                  Pins
+                </button>
+                <button
+                  className={`rounded-md px-2 py-1 text-xs ${
+                    workPane === "threads"
+                      ? "bg-slate-800 text-white"
+                      : "bg-slate-900 text-slate-200 hover:bg-slate-800"
+                  }`}
+                  onClick={() => setWorkPane((p) => (p === "threads" ? null : "threads"))}
+                  type="button"
+                  title="Threads"
+                >
+                  Threads
+                </button>
+              </div>
+            ) : null}
+            {uiMode === "play" ? (
+              <button
+                className="ml-2 inline-flex items-center gap-2 rounded-md bg-indigo-600 px-3 py-2 text-xs font-semibold text-white hover:bg-indigo-500 disabled:opacity-50"
+                disabled={createMeeting.isPending}
+                onClick={() => createMeeting.mutate()}
+                title="Start meeting"
+                type="button"
+              >
+                ðŸ“¹ <span>Start meeting</span>
+              </button>
+            ) : null}
             <button
-              className="grid h-8 w-8 place-items-center rounded-md bg-slate-900 text-slate-200 hover:bg-slate-800 disabled:opacity-50"
+              className={`grid h-8 w-8 place-items-center rounded-md bg-slate-900 text-slate-200 hover:bg-slate-800 disabled:opacity-50 ${
+                uiMode === "play" ? "hidden" : ""
+              }`}
               disabled={createMeeting.isPending}
               onClick={() => createMeeting.mutate()}
               title="Start meeting"
@@ -488,9 +558,49 @@ export function ChannelPage() {
           </div>
           <div className="text-xs text-slate-400">{connected ? "realtime online" : "realtime offline"}</div>
         </div>
-<div className="mt-4 h-[60vh] overflow-auto rounded-lg border border-slate-800 bg-slate-950/30 p-3">
+
+        {uiMode === "work" && workPane === "search" && workSearchOpen ? (
+          <div className="mt-3 flex items-center gap-2 rounded-lg border border-slate-800 bg-slate-950/30 px-3 py-2">
+            <input
+              className="w-full rounded-md border border-slate-800 bg-slate-900 px-3 py-2 text-sm text-slate-200 outline-none focus:border-indigo-500"
+              placeholder="Search messages in this channel..."
+              value={workSearch}
+              onChange={(e) => setWorkSearch(e.target.value)}
+            />
+            <button
+              className="rounded-md bg-slate-900 px-3 py-2 text-xs text-slate-200 hover:bg-slate-800"
+              onClick={() => {
+                setWorkSearch("");
+                setWorkPane(null);
+                setWorkSearchOpen(false);
+              }}
+              type="button"
+              title="Close search"
+            >
+              Close
+            </button>
+          </div>
+        ) : null}
+
+        {uiMode === "work" && workPane && workPane !== "search" ? (
+          <div className="mt-3 rounded-lg border border-slate-800 bg-slate-950/30 px-3 py-2 text-sm text-slate-200">
+            <div className="flex items-center justify-between">
+              <div className="font-semibold capitalize">{workPane}</div>
+              <button
+                className="rounded-md bg-slate-900 px-3 py-2 text-xs text-slate-200 hover:bg-slate-800"
+                onClick={() => setWorkPane(null)}
+                type="button"
+              >
+                Close
+              </button>
+            </div>
+            <div className="mt-1 text-xs text-slate-400">Coming soon â€” this is a Work Mode surfaced feature.</div>
+          </div>
+        ) : null}
+
+        <div className="mt-4 h-[60vh] overflow-auto rounded-lg border border-slate-800 bg-slate-950/30 p-3">
           <div className="space-y-3">
-            {orderedMessages.map((m) => {
+            {visibleMessages.map((m) => {
               const isMe = m.sender_id === (me?.id ?? "me") || m.sender_id === "me";
               const senderName = memberById.get(m.sender_id)?.display_name ?? m.sender_id.slice(0, 8);
               return (
@@ -511,17 +621,46 @@ export function ChannelPage() {
                         }}
                       >
                         <div ref={reactionPickerFor === m.id ? reactionPickerRef : undefined}>
-                          <button
-                            className={`absolute -top-3 ${
-                              isMe ? "left-0 -translate-x-1/2" : "right-0 translate-x-1/2"
-                            } grid h-7 w-7 place-items-center rounded-full border border-slate-700 bg-slate-950/90 text-xs text-slate-200 opacity-0 shadow-sm backdrop-blur transition-opacity hover:bg-slate-900 group-hover:opacity-100`}
-                            onClick={() => setReactionPickerFor((cur) => (cur === m.id ? null : m.id))}
-                            type="button"
-                            aria-label="Add reaction"
-                            title="React"
-                          >
-                            {"\u{1F642}"}
-                          </button>
+                          {uiMode === "play" ? (
+                            <div
+                              className={`absolute -top-4 ${
+                                isMe ? "left-0 -translate-x-1/2" : "right-0 translate-x-1/2"
+                              } z-20 flex items-center gap-1 rounded-full border border-slate-700 bg-slate-950/95 px-2 py-1 text-xs text-slate-200 opacity-0 shadow-lg backdrop-blur transition-opacity group-hover:opacity-100`}
+                            >
+                              {QUICK_REACTIONS.slice(0, 3).map((e) => (
+                                <button
+                                  key={e}
+                                  className="grid h-7 w-7 place-items-center rounded-full text-base hover:bg-slate-800/70"
+                                  onClick={() => addReaction.mutate({ messageId: m.id, emoji: e })}
+                                  type="button"
+                                  title={e}
+                                >
+                                  {e}
+                                </button>
+                              ))}
+                              <button
+                                className="grid h-7 w-7 place-items-center rounded-full hover:bg-slate-800/70"
+                                onClick={() => setReactionPickerFor((cur) => (cur === m.id ? null : m.id))}
+                                type="button"
+                                aria-label="More reactions"
+                                title="More"
+                              >
+                                +
+                              </button>
+                            </div>
+                          ) : (
+                            <button
+                              className={`absolute -top-3 ${
+                                isMe ? "left-0 -translate-x-1/2" : "right-0 translate-x-1/2"
+                              } grid h-7 w-7 place-items-center rounded-full border border-slate-700 bg-slate-950/90 text-xs text-slate-200 opacity-0 shadow-sm backdrop-blur transition-opacity hover:bg-slate-900 group-hover:opacity-100`}
+                              onClick={() => setReactionPickerFor((cur) => (cur === m.id ? null : m.id))}
+                              type="button"
+                              aria-label="Add reaction"
+                              title="React"
+                            >
+                              {"\u{1F642}"}
+                            </button>
+                          )}
                           {reactionPickerFor === m.id ? (
                             <div
                               className={`absolute -top-12 ${isMe ? "left-0" : "right-0"} z-20 flex items-center gap-1 rounded-full border border-slate-700 bg-slate-950/95 px-2 py-1 shadow-lg backdrop-blur`}
@@ -669,7 +808,7 @@ export function ChannelPage() {
             />
             <div className="flex-1" />
           </div>
-          <div className="rounded-xl border border-slate-800 bg-slate-950/30 px-3 py-2">
+          <div className="flex items-end gap-2 rounded-xl border border-slate-800 bg-slate-950/30 px-3 py-2 focus-within:border-indigo-500/70 focus-within:ring-1 focus-within:ring-indigo-500/30">
             <TextArea
               ref={textAreaRef}
               rows={1}
@@ -687,11 +826,13 @@ export function ChannelPage() {
                 el.style.height = "";
                 el.style.height = Math.min(el.scrollHeight, 180) + "px";
               }}
-              className="border-0 bg-transparent px-0 py-0 focus:border-0"
+              className="max-h-[180px] flex-1 resize-none border-0 bg-transparent px-0 py-0 text-sm leading-6 focus:border-0"
             />
-            <div className="mt-2 flex items-center justify-end gap-2">
+            <div className="flex items-center gap-1 pb-0.5">
               <button
-                className="rounded-md px-2 py-1 text-sm text-slate-300 hover:bg-slate-800/60 hover:text-slate-100"
+                className={`grid h-9 w-9 place-items-center rounded-md text-sm text-slate-300 hover:bg-slate-800/60 hover:text-slate-100 ${
+                  uiMode === "work" ? "hidden" : ""
+                }`}
                 onClick={() => setEmojiOpen((v) => !v)}
                 type="button"
                 title="Emoji"
@@ -699,15 +840,16 @@ export function ChannelPage() {
                 🙂
               </button>
               <button
-                className="rounded-md px-2 py-1 text-sm text-slate-300 hover:bg-slate-800/60 hover:text-slate-100"
+                className="grid h-9 w-9 place-items-center rounded-md text-sm text-slate-300 hover:bg-slate-800/60 hover:text-slate-100"
                 onClick={() => fileInputRef.current?.click()}
                 type="button"
                 title="Attach"
               >
                 📎
               </button>
+              <div className="mx-1 h-6 w-px bg-slate-800" />
               <button
-                className={`rounded-md px-3 py-1.5 text-sm ${
+                className={`grid h-9 w-9 place-items-center rounded-md text-sm ${
                   send.isPending ? "bg-slate-800 text-slate-400" : "bg-indigo-600 text-white hover:bg-indigo-500"
                 }`}
                 disabled={send.isPending}
@@ -718,7 +860,7 @@ export function ChannelPage() {
               </button>
             </div>
           </div>
-</form>
+        </form>
       </section>
     </div>
   );
