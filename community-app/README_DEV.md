@@ -75,6 +75,10 @@ Message attachments (local filesystem backend):
 - `ATTACHMENTS_MAX_BYTES` (default `5242880`)
 - `ATTACHMENTS_DIR` (default `.local/attachments`)
 
+Experience mode resolver:
+- `GET /experience/context?org_id=...&channel_id=...` resolves Work/Play using: user preference > channel hint > org default > preset.
+- `PATCH /experience/preferences` with `{ "mode_preference": "work" | "play" | null }` updates the user’s global preference.
+
 ## Current commands (do not run here; run locally)
 
 From `community-app/`:
