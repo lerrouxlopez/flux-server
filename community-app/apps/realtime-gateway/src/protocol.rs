@@ -93,4 +93,23 @@ pub enum ServerEvent {
         occurred_at: String,
         last_heartbeat_at: Option<String>,
     },
+
+    #[serde(rename = "thread.reply.created")]
+    ThreadReplyCreated {
+        organization_id: Uuid,
+        channel_id: Uuid,
+        thread_id: Uuid,
+        thread_root_id: Uuid,
+        message_id: Uuid,
+        occurred_at: String,
+    },
+
+    #[serde(rename = "channel.pins.changed")]
+    ChannelPinsChanged {
+        organization_id: Uuid,
+        channel_id: Uuid,
+        message_id: Uuid,
+        action: String,
+        occurred_at: String,
+    },
 }

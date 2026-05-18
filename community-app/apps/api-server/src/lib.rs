@@ -13,6 +13,7 @@ pub mod routes_friends;
 pub mod routes_media;
 pub mod routes_messages;
 pub mod routes_orgs;
+pub mod routes_threads;
 pub mod util;
 
 #[derive(Clone)]

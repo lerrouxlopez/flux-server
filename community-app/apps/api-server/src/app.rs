@@ -35,6 +35,7 @@ pub fn build_app(cfg: &config::AppConfig, state: AppState) -> Router {
         .merge(crate::routes_branding::router())
         .merge(crate::routes_friends::router())
         .merge(crate::routes_dms::router())
+        .merge(crate::routes_threads::router())
         .route("/healthz", get(|| async { "ok" }))
         .route("/readyz", get(crate::readyz))
         .layer(

@@ -5,6 +5,7 @@ import { apiFetch } from "../api/client";
 import type {
   ChannelsResponse,
   Channel,
+  ChannelSearchResponse,
   ListMessagesResponse,
   MessageAttachment,
   MessageReaction,
@@ -13,6 +14,9 @@ import type {
   MembersResponse,
   Message,
   OrgsListResponse,
+  PinsResponse,
+  ThreadWithMessagesResponse,
+  ThreadsListResponse,
 } from "../api/types";
 import { createRealtimeClient } from "../realtime/ws";
 import { Button } from "../components/Button";
@@ -51,6 +55,9 @@ export function ChannelPage() {
   const [workSearchOpen, setWorkSearchOpen] = useState(false);
   const [workSearch, setWorkSearch] = useState("");
   const [workPane, setWorkPane] = useState<"search" | "pins" | "threads" | null>(null);
+  const [activeThreadId, setActiveThreadId] = useState<string | null>(null);
+  const [threadDraft, setThreadDraft] = useState("");
+  const [newThreadDraft, setNewThreadDraft] = useState("");
 
   const QUICK_REACTIONS = useMemo(
     () => ["\u{1F44D}", "\u{2764}\u{FE0F}", "\u{1F602}", "\u{1F62E}", "\u{1F622}", "\u{1F621}"],
@@ -212,6 +219,17 @@ export function ChannelPage() {
           const status = String(e.status ?? "") as PresenceStatus;
           if (!userId || (status !== "online" && status !== "offline")) return;
           setPresenceByUser((prev) => ({ ...prev, [userId]: status }));
+        }
+
+        if (e?.type === "thread.reply.created" && e.channel_id === channel_id) {
+          qc.invalidateQueries({ queryKey: ["threads", channel_id] });
+          qc.invalidateQueries({ queryKey: ["thread", String(e.thread_id ?? "")] });
+          return;
+        }
+
+        if (e?.type === "channel.pins.changed" && e.channel_id === channel_id) {
+          qc.invalidateQueries({ queryKey: ["pins", channel_id] });
+          return;
         }
       },
     });
@@ -405,13 +423,110 @@ export function ChannelPage() {
     return [...list].reverse();
   }, [messages.data]);
 
+  const searchResults = useQuery({
+    enabled: !!channel_id && uiMode === "work" && workPane === "search" && workSearchOpen && !!workSearch.trim(),
+    queryKey: ["channel-search", channel_id, workSearch.trim()],
+    queryFn: () => apiFetch<ChannelSearchResponse>(`/channels/${channel_id}/search?q=${encodeURIComponent(workSearch.trim())}&limit=50`),
+    staleTime: 2_000,
+  });
+
+  const pins = useQuery({
+    enabled: !!channel_id && uiMode === "work",
+    queryKey: ["pins", channel_id],
+    queryFn: () => apiFetch<PinsResponse>(`/channels/${channel_id}/pins`),
+    staleTime: 2_000,
+  });
+
+  const threads = useQuery({
+    enabled: !!channel_id && uiMode === "work" && workPane === "threads" && !activeThreadId,
+    queryKey: ["threads", channel_id],
+    queryFn: () => apiFetch<ThreadsListResponse>(`/channels/${channel_id}/threads`),
+    staleTime: 2_000,
+  });
+
+  const thread = useQuery({
+    enabled: !!activeThreadId,
+    queryKey: ["thread", activeThreadId],
+    queryFn: () => apiFetch<ThreadWithMessagesResponse>(`/threads/${activeThreadId}`),
+    staleTime: 2_000,
+  });
+
+  const pinnedIds = useMemo(() => {
+    const set = new Set<string>();
+    for (const p of pins.data?.pins ?? []) set.add(p.message_id);
+    return set;
+  }, [pins.data]);
+
   const visibleMessages = useMemo(() => {
     if (uiMode !== "work") return orderedMessages;
     if (workPane !== "search") return orderedMessages;
     const q = workSearch.trim().toLowerCase();
     if (!q) return orderedMessages;
-    return orderedMessages.filter((m) => (m.body ?? "").toLowerCase().includes(q));
-  }, [orderedMessages, uiMode, workPane, workSearch]);
+
+    const fromApi = searchResults.data?.messages ?? null;
+    if (!fromApi) return orderedMessages;
+
+    const sorted = [...fromApi].sort((a, b) => {
+      const da = parseApiOffsetDateTime(a.created_at)?.getTime() ?? 0;
+      const db = parseApiOffsetDateTime(b.created_at)?.getTime() ?? 0;
+      if (da !== db) return da - db;
+      return String(a.id).localeCompare(String(b.id));
+    });
+    return sorted;
+  }, [orderedMessages, uiMode, workPane, workSearch, searchResults.data]);
+
+  const createThread = useMutation({
+    mutationFn: async (input: { body?: string; root_message_id?: string }) => {
+      return apiFetch<{ id: string } | any>(`/channels/${channel_id}/threads`, {
+        method: "POST",
+        body: JSON.stringify(input),
+      });
+    },
+    onSuccess: async (res: any) => {
+      const tid = String(res?.id ?? "");
+      if (tid) {
+        setWorkPane("threads");
+        setActiveThreadId(tid);
+        setThreadDraft("");
+        await qc.invalidateQueries({ queryKey: ["threads", channel_id] });
+      }
+    },
+  });
+
+  const replyToThread = useMutation({
+    mutationFn: async (input: { thread_id: string; body: string }) => {
+      return apiFetch<{ message_id: string }>(`/threads/${input.thread_id}/replies`, {
+        method: "POST",
+        body: JSON.stringify({ body: input.body }),
+      });
+    },
+    onSuccess: async (_res, vars) => {
+      setThreadDraft("");
+      await qc.invalidateQueries({ queryKey: ["thread", vars.thread_id] });
+      await qc.invalidateQueries({ queryKey: ["threads", channel_id] });
+    },
+  });
+
+  const pin = useMutation({
+    mutationFn: async (messageId: string) => {
+      return apiFetch<{ status: string }>(`/channels/${channel_id}/pins`, {
+        method: "POST",
+        body: JSON.stringify({ message_id: messageId }),
+      });
+    },
+    onSuccess: async () => {
+      await qc.invalidateQueries({ queryKey: ["pins", channel_id] });
+    },
+  });
+
+  const unpin = useMutation({
+    mutationFn: async (messageId: string) => {
+      return apiFetch<{ status: string }>(`/channels/${channel_id}/pins/${messageId}`, { method: "DELETE" });
+    },
+    onSuccess: async () => {
+      await qc.invalidateQueries({ queryKey: ["pins", channel_id] });
+    },
+  });
 
   const channelTitle = channel?.kind === "dm" ? `Direct message` : `# ${channel?.name ?? ""}`;
 
@@ -488,7 +603,11 @@ export function ChannelPage() {
                   className={`rounded-md px-2 py-1 text-xs ${
                     workPane === "pins" ? "bg-slate-800 text-white" : "bg-slate-900 text-slate-200 hover:bg-slate-800"
                   }`}
-                  onClick={() => setWorkPane((p) => (p === "pins" ? null : "pins"))}
+                  onClick={() => {
+                    setActiveThreadId(null);
+                    setThreadDraft("");
+                    setWorkPane((p) => (p === "pins" ? null : "pins"));
+                  }}
                   type="button"
                   title="Pins"
                 >
@@ -500,7 +619,14 @@ export function ChannelPage() {
                       ? "bg-slate-800 text-white"
                       : "bg-slate-900 text-slate-200 hover:bg-slate-800"
                   }`}
-                  onClick={() => setWorkPane((p) => (p === "threads" ? null : "threads"))}
+                  onClick={() => {
+                    setThreadDraft("");
+                    setWorkPane((p) => {
+                      const next = p === "threads" ? null : "threads";
+                      if (next === null) setActiveThreadId(null);
+                      return next;
+                    });
+                  }}
                   type="button"
                   title="Threads"
                 >
@@ -585,16 +711,191 @@ export function ChannelPage() {
         {uiMode === "work" && workPane && workPane !== "search" ? (
           <div className="mt-3 rounded-lg border border-slate-800 bg-slate-950/30 px-3 py-2 text-sm text-slate-200">
             <div className="flex items-center justify-between">
-              <div className="font-semibold capitalize">{workPane}</div>
-              <button
-                className="rounded-md bg-slate-900 px-3 py-2 text-xs text-slate-200 hover:bg-slate-800"
-                onClick={() => setWorkPane(null)}
-                type="button"
-              >
-                Close
-              </button>
+              <div className="font-semibold capitalize">
+                {workPane === "threads" ? (activeThreadId ? "Thread" : "Threads") : "Pins"}
+              </div>
+              <div className="flex items-center gap-2">
+                {workPane === "threads" && activeThreadId ? (
+                  <button
+                    className="rounded-md bg-slate-900 px-3 py-2 text-xs text-slate-200 hover:bg-slate-800"
+                    onClick={() => {
+                      setActiveThreadId(null);
+                      setThreadDraft("");
+                    }}
+                    type="button"
+                  >
+                    Back
+                  </button>
+                ) : null}
+                <button
+                  className="rounded-md bg-slate-900 px-3 py-2 text-xs text-slate-200 hover:bg-slate-800"
+                  onClick={() => {
+                    setWorkPane(null);
+                    setActiveThreadId(null);
+                    setThreadDraft("");
+                  }}
+                  type="button"
+                >
+                  Close
+                </button>
+              </div>
             </div>
-            <div className="mt-1 text-xs text-slate-400">Coming soon â€” this is a Work Mode surfaced feature.</div>
+
+            {workPane === "pins" ? (
+              <div className="mt-2 space-y-2">
+                {pins.isLoading ? <div className="text-xs text-slate-400">Loading pins...</div> : null}
+                {pins.isError ? <div className="text-xs text-rose-300">Failed to load pins.</div> : null}
+                {!pins.isLoading && !pins.isError && (pins.data?.pins ?? []).length === 0 ? (
+                  <div className="text-xs text-slate-400">No pinned messages yet.</div>
+                ) : null}
+                {(pins.data?.pins ?? []).map((p) => {
+                  const msg = p.message;
+                  const senderName = memberById.get(msg.sender_id)?.display_name ?? msg.sender_id.slice(0, 8);
+                  const pinnedByName = memberById.get(p.pinned_by)?.display_name ?? p.pinned_by.slice(0, 8);
+                  return (
+                    <div key={p.message_id} className="rounded-lg border border-slate-800 bg-slate-950/20 p-2">
+                      <div className="flex items-start justify-between gap-3">
+                        <div className="min-w-0">
+                          <div className="text-xs text-slate-400">
+                            {senderName} · {formatDateTime(msg.created_at)} · pinned by {pinnedByName}
+                          </div>
+                          <div className="mt-1 truncate text-sm text-slate-200">{msg.body ?? "(no text)"}</div>
+                        </div>
+                        <button
+                          className="shrink-0 rounded-md bg-slate-900 px-2 py-1 text-xs text-slate-200 hover:bg-slate-800"
+                          onClick={() => unpin.mutate(p.message_id)}
+                          type="button"
+                          title="Unpin"
+                        >
+                          Unpin
+                        </button>
+                      </div>
+                    </div>
+                  );
+                })}
+              </div>
+            ) : null}
+
+            {workPane === "threads" ? (
+              <div className="mt-2 space-y-3">
+                {activeThreadId ? (
+                  <>
+                    {thread.isLoading ? <div className="text-xs text-slate-400">Loading thread...</div> : null}
+                    {thread.isError ? <div className="text-xs text-rose-300">Failed to load thread.</div> : null}
+                    {thread.data ? (
+                      <div className="space-y-3">
+                        <div className="rounded-lg border border-slate-800 bg-slate-950/20 p-2">
+                          <div className="text-xs text-slate-400">Root</div>
+                          <div className="mt-1 text-sm text-slate-200">{thread.data.root?.body ?? "(no text)"}</div>
+                        </div>
+                        <div className="space-y-2">
+                          <div className="text-xs text-slate-400">Replies</div>
+                          {(thread.data.replies ?? []).length === 0 ? (
+                            <div className="text-xs text-slate-500">No replies yet.</div>
+                          ) : null}
+                          {(thread.data.replies ?? []).map((m) => {
+                            const senderName = memberById.get(m.sender_id)?.display_name ?? m.sender_id.slice(0, 8);
+                            return (
+                              <div key={m.id} className="rounded-lg border border-slate-800 bg-slate-950/10 p-2">
+                                <div className="text-xs text-slate-400">
+                                  {senderName} · {formatDateTime(m.created_at)}
+                                </div>
+                                <div className="mt-1 text-sm text-slate-200">{m.body ?? ""}</div>
+                              </div>
+                            );
+                          })}
+                        </div>
+
+                        <form
+                          className="flex items-end gap-2"
+                          onSubmit={(e) => {
+                            e.preventDefault();
+                            const body = threadDraft.trim();
+                            if (!body || !activeThreadId) return;
+                            replyToThread.mutate({ thread_id: activeThreadId, body });
+                          }}
+                        >
+                          <TextArea
+                            rows={2}
+                            value={threadDraft}
+                            placeholder="Reply in thread..."
+                            onChange={(e) => setThreadDraft(e.target.value)}
+                            className="min-h-[60px] flex-1 resize-none rounded-md border border-slate-800 bg-slate-900 px-3 py-2 text-sm text-slate-200 outline-none focus:border-indigo-500"
+                          />
+                          <Button
+                            className="bg-indigo-600 px-3 py-2 text-xs hover:bg-indigo-500"
+                            disabled={replyToThread.isPending || !threadDraft.trim()}
+                            type="submit"
+                          >
+                            Reply
+                          </Button>
+                        </form>
+                      </div>
+                    ) : null}
+                  </>
+                ) : (
+                  <>
+                    <form
+                      className="flex items-end gap-2"
+                      onSubmit={(e) => {
+                        e.preventDefault();
+                        const body = newThreadDraft.trim();
+                        if (!body) return;
+                        createThread.mutate({ body });
+                        setNewThreadDraft("");
+                      }}
+                    >
+                      <TextArea
+                        rows={2}
+                        value={newThreadDraft}
+                        placeholder="Start a new thread..."
+                        onChange={(e) => setNewThreadDraft(e.target.value)}
+                        className="min-h-[60px] flex-1 resize-none rounded-md border border-slate-800 bg-slate-900 px-3 py-2 text-sm text-slate-200 outline-none focus:border-indigo-500"
+                      />
+                      <Button
+                        className="bg-indigo-600 px-3 py-2 text-xs hover:bg-indigo-500"
+                        disabled={createThread.isPending || !newThreadDraft.trim()}
+                        type="submit"
+                      >
+                        Create
+                      </Button>
+                    </form>
+
+                    {threads.isLoading ? <div className="text-xs text-slate-400">Loading threads...</div> : null}
+                    {threads.isError ? <div className="text-xs text-rose-300">Failed to load threads.</div> : null}
+                    {!threads.isLoading && !threads.isError && (threads.data?.threads ?? []).length === 0 ? (
+                      <div className="text-xs text-slate-400">No threads yet.</div>
+                    ) : null}
+                    <div className="space-y-2">
+                      {(threads.data?.threads ?? []).map((t) => {
+                        const root = t.root;
+                        const senderName = root ? memberById.get(root.sender_id)?.display_name ?? root.sender_id.slice(0, 8) : "Unknown";
+                        return (
+                          <button
+                            key={t.thread.id}
+                            className="w-full rounded-lg border border-slate-800 bg-slate-950/10 p-2 text-left hover:bg-slate-900/40"
+                            onClick={() => setActiveThreadId(t.thread.id)}
+                            type="button"
+                          >
+                            <div className="flex items-center justify-between gap-2">
+                              <div className="min-w-0">
+                                <div className="text-xs text-slate-400">
+                                  {senderName} · {root ? formatDateTime(root.created_at) : ""}
+                                </div>
+                                <div className="mt-1 truncate text-sm text-slate-200">{root?.body ?? "(no text)"}</div>
+                              </div>
+                              <div className="shrink-0 rounded-full bg-slate-900 px-2 py-0.5 text-xs text-slate-200">
+                                {t.reply_count}
+                              </div>
+                            </div>
+                          </button>
+                        );
+                      })}
+                    </div>
+                  </>
+                )}
+              </div>
+            ) : null}
           </div>
         ) : null}
 
@@ -603,6 +904,8 @@ export function ChannelPage() {
             {visibleMessages.map((m) => {
               const isMe = m.sender_id === (me?.id ?? "me") || m.sender_id === "me";
               const senderName = memberById.get(m.sender_id)?.display_name ?? m.sender_id.slice(0, 8);
+              const isPinned = uiMode === "work" && pinnedIds.has(m.id);
+              const threadId = m.thread_id ?? null;
               return (
                 <div key={m.id} className={`group flex ${isMe ? "justify-end" : "justify-start"}`}>
                   <div className={`flex max-w-[88%] items-end gap-2 ${isMe ? "flex-row-reverse" : "flex-row"}`}>
@@ -649,17 +952,48 @@ export function ChannelPage() {
                               </button>
                             </div>
                           ) : (
-                            <button
+                            <div
                               className={`absolute -top-3 ${
                                 isMe ? "left-0 -translate-x-1/2" : "right-0 translate-x-1/2"
-                              } grid h-7 w-7 place-items-center rounded-full border border-slate-700 bg-slate-950/90 text-xs text-slate-200 opacity-0 shadow-sm backdrop-blur transition-opacity hover:bg-slate-900 group-hover:opacity-100`}
-                              onClick={() => setReactionPickerFor((cur) => (cur === m.id ? null : m.id))}
-                              type="button"
-                              aria-label="Add reaction"
-                              title="React"
+                              } z-20 flex items-center gap-1 rounded-full border border-slate-700 bg-slate-950/90 px-1 py-1 text-xs text-slate-200 opacity-0 shadow-sm backdrop-blur transition-opacity group-hover:opacity-100`}
                             >
-                              {"\u{1F642}"}
-                            </button>
+                              <button
+                                className="grid h-7 w-7 place-items-center rounded-full hover:bg-slate-900"
+                                onClick={() => setReactionPickerFor((cur) => (cur === m.id ? null : m.id))}
+                                type="button"
+                                aria-label="Add reaction"
+                                title="React"
+                              >
+                                {"\u{1F642}"}
+                              </button>
+                              <button
+                                className={`grid h-7 w-7 place-items-center rounded-full ${
+                                  isPinned ? "bg-indigo-500/20 text-indigo-100" : "hover:bg-slate-900"
+                                }`}
+                                onClick={() => {
+                                  if (isPinned) unpin.mutate(m.id);
+                                  else pin.mutate(m.id);
+                                }}
+                                type="button"
+                                aria-label="Pin message"
+                                title={isPinned ? "Unpin" : "Pin"}
+                              >
+                                {"\u{1F4CC}"}
+                              </button>
+                              <button
+                                className="grid h-7 w-7 place-items-center rounded-full hover:bg-slate-900"
+                                onClick={() => {
+                                  setWorkPane("threads");
+                                  if (threadId) setActiveThreadId(threadId);
+                                  else createThread.mutate({ root_message_id: m.id });
+                                }}
+                                type="button"
+                                aria-label="Open thread"
+                                title="Thread"
+                              >
+                                {"\u{1F9F5}"}
+                              </button>
+                            </div>
                           )}
                           {reactionPickerFor === m.id ? (
                             <div

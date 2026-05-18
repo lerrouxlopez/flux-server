@@ -79,6 +79,20 @@ impl Runtime {
                     return;
                 }
             };
+            let mut sub_thread = match nats.subscribe("org.*.channel.*.thread.*.reply.created").await {
+                Ok(s) => s,
+                Err(e) => {
+                    warn!(?e, "nats subscribe failed (thread.reply.created)");
+                    return;
+                }
+            };
+            let mut sub_pins = match nats.subscribe("org.*.channel.*.pins.changed").await {
+                Ok(s) => s,
+                Err(e) => {
+                    warn!(?e, "nats subscribe failed (channel.pins.changed)");
+                    return;
+                }
+            };
 
             loop {
                 tokio::select! {
@@ -110,6 +124,18 @@ impl Runtime {
                         let Some(msg) = msg else { break; };
                         if let Err(e) = handle_media_event(&hub, msg.payload).await {
                             debug!(?e, "failed to handle media event");
+                        }
+                    }
+                    msg = sub_thread.next() => {
+                        let Some(msg) = msg else { break; };
+                        if let Err(e) = handle_thread_reply_created(&hub, msg.payload).await {
+                            debug!(?e, "failed to handle thread.reply.created");
+                        }
+                    }
+                    msg = sub_pins.next() => {
+                        let Some(msg) = msg else { break; };
+                        if let Err(e) = handle_channel_pins_changed(&hub, msg.payload).await {
+                            debug!(?e, "failed to handle channel.pins.changed");
                         }
                     }
                 }
@@ -768,6 +794,37 @@ async fn handle_media_event(hub: &Hub, payload: bytes::Bytes) -> anyhow::Result<
         _ => {}
     }
 
+    Ok(())
+}
+
+async fn handle_thread_reply_created(hub: &Hub, payload: bytes::Bytes) -> anyhow::Result<()> {
+    let env: events::envelope::EventEnvelope<events::messaging::ThreadReplyCreatedData> =
+        serde_json::from_slice(&payload)?;
+    let d = env.data;
+    let evt = ServerEvent::ThreadReplyCreated {
+        organization_id: env.organization_id,
+        channel_id: d.channel_id,
+        thread_id: d.thread_id,
+        thread_root_id: d.thread_root_id,
+        message_id: d.message_id,
+        occurred_at: d.occurred_at.to_string(),
+    };
+    hub.broadcast_event(&evt);
+    Ok(())
+}
+
+async fn handle_channel_pins_changed(hub: &Hub, payload: bytes::Bytes) -> anyhow::Result<()> {
+    let env: events::envelope::EventEnvelope<events::messaging::ChannelPinsChangedData> =
+        serde_json::from_slice(&payload)?;
+    let d = env.data;
+    let evt = ServerEvent::ChannelPinsChanged {
+        organization_id: env.organization_id,
+        channel_id: d.channel_id,
+        message_id: d.message_id,
+        action: d.action,
+        occurred_at: d.occurred_at.to_string(),
+    };
+    hub.broadcast_event(&evt);
     Ok(())
 }
 

@@ -3,6 +3,7 @@ use async_nats::Client;
 pub mod core;
 pub mod envelope;
 pub mod jetstream;
+pub mod messaging;
 pub mod media;
 pub mod subjects;
 

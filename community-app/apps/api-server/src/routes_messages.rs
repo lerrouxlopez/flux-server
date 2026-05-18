@@ -74,6 +74,7 @@ struct MessageResponse {
     organization_id: Uuid,
     channel_id: Uuid,
     sender_id: Uuid,
+    thread_id: Option<Uuid>,
     body: Option<String>,
     kind: String,
     attachments: Vec<AttachmentResponse>,
@@ -136,7 +137,7 @@ async fn list_messages(
     let rows = if let Some((created_at, id)) = cursor {
         sqlx::query(
             r#"
-            select id, organization_id, channel_id, sender_id, body, kind, created_at, edited_at, deleted_at
+            select id, organization_id, channel_id, sender_id, thread_id, body, kind, created_at, edited_at, deleted_at
             from messages
             where channel_id = $1
               and deleted_at is null
@@ -154,7 +155,7 @@ async fn list_messages(
     } else {
         sqlx::query(
             r#"
-            select id, organization_id, channel_id, sender_id, body, kind, created_at, edited_at, deleted_at
+            select id, organization_id, channel_id, sender_id, thread_id, body, kind, created_at, edited_at, deleted_at
             from messages
             where channel_id = $1
               and deleted_at is null
@@ -187,6 +188,7 @@ async fn list_messages(
             organization_id: r.get("organization_id"),
             channel_id: r.get("channel_id"),
             sender_id: r.get("sender_id"),
+            thread_id: r.try_get("thread_id").ok(),
             body: r.get("body"),
             kind: r.get("kind"),
             attachments: attachments_by_message
@@ -390,6 +392,7 @@ async fn send_message(
             organization_id: org_id,
             channel_id,
             sender_id: auth.user_id,
+            thread_id: None,
             body,
             kind: kind.to_string(),
             attachments: inserted_attachments,

@@ -25,6 +25,7 @@ export type Message = {
   organization_id: string;
   channel_id: string;
   sender_id: string;
+  thread_id?: string | null;
   body: string | null;
   kind: string;
   attachments?: MessageAttachment[];
@@ -35,6 +36,32 @@ export type Message = {
 };
 
 export type ListMessagesResponse = { messages: Message[]; next_cursor?: string | null };
+
+export type Thread = {
+  id: string;
+  organization_id: string;
+  channel_id: string;
+  root_message_id: string;
+  created_by: string;
+  created_at: string;
+  last_reply_at?: string | null;
+};
+
+export type ThreadWithMessagesResponse = {
+  thread: Thread;
+  root: Message | null;
+  replies: Message[];
+};
+
+export type ThreadsListResponse = {
+  threads: { thread: Thread; root: Message | null; reply_count: number }[];
+};
+
+export type PinsResponse = {
+  pins: { message_id: string; pinned_by: string; pinned_at: string; message: Message }[];
+};
+
+export type ChannelSearchResponse = { messages: Message[] };
 
 export type MessageAttachment = {
   id: string;
