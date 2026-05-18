@@ -315,20 +315,22 @@ async fn join_room(
         _ => return util::api_error(ApiErrorCode::ValidationError),
     };
 
-    let joined = match media::join_room(
+    let livekit = media::LiveKitConfig {
+        internal_url: state.livekit_url_internal.clone(),
+        public_url: state.livekit_url_public.clone(),
+        api_key: state.livekit_api_key.clone(),
+        api_secret: state.livekit_api_secret.clone(),
+    };
+
+    let joined = match media::join_room_with_meta(
         &state.pool,
-        &media::LiveKitConfig {
-            internal_url: state.livekit_url_internal.clone(),
-            public_url: state.livekit_url_public.clone(),
-            api_key: state.livekit_api_key.clone(),
-            api_secret: state.livekit_api_secret.clone(),
-        },
+        &livekit,
         &room,
         auth.user_id,
         perms,
         media::JoinRequest {
             intent,
-            device_id: req.device_id,
+            device_id: req.device_id.clone(),
         },
     )
     .await
@@ -342,7 +344,66 @@ async fn join_room(
         }
     };
 
-    (StatusCode::OK, Json(joined)).into_response()
+    let (resp, meta) = joined;
+    let now = time::OffsetDateTime::now_utc();
+
+    // Publish typed media events (best-effort, post-commit).
+    if meta.session_started {
+        let env = events::envelope::EventEnvelope::new(
+            "media.session.started",
+            room.organization_id,
+            Some(auth.user_id),
+            events::media::MediaSessionStartedData {
+                room_id: room.id,
+                session_id: resp.session_id,
+                started_at: now,
+            },
+        );
+        let subject = events::subjects::media_session_started(room.organization_id, room.id, resp.session_id);
+        let _ = events::core::publish(&state.nats, subject, &env).await;
+    }
+
+    if meta.participant_reused {
+        let env = events::envelope::EventEnvelope::new(
+            "media.participant.updated",
+            room.organization_id,
+            Some(auth.user_id),
+            events::media::MediaParticipantUpdatedData {
+                room_id: room.id,
+                session_id: resp.session_id,
+                participant_id: resp.participant_id,
+                user_id: auth.user_id,
+                device_id: meta.device_id.clone(),
+                occurred_at: now,
+                last_heartbeat_at: Some(now),
+            },
+        );
+        let subject = events::subjects::media_participant_updated(room.organization_id, room.id, resp.session_id);
+        let _ = events::core::publish(&state.nats, subject, &env).await;
+    } else {
+        let env = events::envelope::EventEnvelope::new(
+            "media.participant.joined",
+            room.organization_id,
+            Some(auth.user_id),
+            events::media::MediaParticipantJoinedData {
+                room_id: room.id,
+                session_id: resp.session_id,
+                participant_id: resp.participant_id,
+                user_id: auth.user_id,
+                device_id: meta.device_id.clone(),
+                joined_at: now,
+                can_subscribe: resp.granted.can_subscribe,
+                can_publish_audio: resp.granted.can_publish_audio,
+                can_publish_video: resp.granted.can_publish_video,
+                can_publish_screen: resp.granted.can_publish_screen,
+                can_publish_data: resp.granted.can_publish_data,
+            },
+        );
+        let subject = events::subjects::media_participant_joined(room.organization_id, room.id, resp.session_id);
+        let _ = events::core::publish(&state.nats, subject, &env).await;
+    }
+
+    (StatusCode::OK, Json(resp)).into_response()
 }
 
 async fn get_session_status(
@@ -397,8 +458,33 @@ async fn heartbeat(
         return util::api_error(ApiErrorCode::PermissionDenied);
     }
 
-    let ok = match body.and_then(|Json(b)| b.device_id) {
-        Some(device_id) => media::heartbeat_device(&state.pool, session_id, auth.user_id, &device_id).await,
+    let device_id = body.and_then(|Json(b)| b.device_id);
+    let participant_id = if let Some(ref device_id) = device_id {
+        sqlx::query_scalar::<_, Uuid>(
+            r#"
+            select id
+            from media_participants
+            where media_session_id = $1
+              and user_id = $2
+              and device_id = $3
+              and left_at is null
+            order by joined_at desc
+            limit 1
+            "#,
+        )
+        .bind(session_id)
+        .bind(auth.user_id)
+        .bind(device_id)
+        .fetch_optional(&state.pool)
+        .await
+        .ok()
+        .flatten()
+    } else {
+        None
+    };
+
+    let ok = match device_id.as_deref() {
+        Some(device_id) => media::heartbeat_device(&state.pool, session_id, auth.user_id, device_id).await,
         None => media::heartbeat(&state.pool, session_id, auth.user_id).await,
     };
     let ok = match ok {
@@ -407,6 +493,30 @@ async fn heartbeat(
     };
     if !ok {
         return util::api_error(ApiErrorCode::NotFound);
+    }
+
+    if let (Some(device_id), Some(participant_id)) = (device_id, participant_id) {
+        let now = time::OffsetDateTime::now_utc();
+        let env = events::envelope::EventEnvelope::new(
+            "media.participant.updated",
+            status.session.organization_id,
+            Some(auth.user_id),
+            events::media::MediaParticipantUpdatedData {
+                room_id: status.session.media_room_id,
+                session_id,
+                participant_id,
+                user_id: auth.user_id,
+                device_id,
+                occurred_at: now,
+                last_heartbeat_at: Some(now),
+            },
+        );
+        let subject = events::subjects::media_participant_updated(
+            status.session.organization_id,
+            status.session.media_room_id,
+            session_id,
+        );
+        let _ = events::core::publish(&state.nats, subject, &env).await;
     }
 
     (StatusCode::OK, Json(serde_json::json!({"status":"ok"}))).into_response()
@@ -446,9 +556,20 @@ async fn leave(
         api_secret: state.livekit_api_secret.clone(),
     };
 
-    let ok = match body.and_then(|Json(b)| b.device_id) {
-        Some(device_id) => media::leave_device(&state.pool, &livekit, session_id, auth.user_id, &device_id).await,
-        None => media::leave(&state.pool, &livekit, session_id, auth.user_id).await,
+    let device_id = body.and_then(|Json(b)| b.device_id);
+    let meta = if let Some(ref device_id) = device_id {
+        match media::leave_device_with_meta(&state.pool, &livekit, session_id, auth.user_id, device_id).await {
+            Ok(m) => m,
+            Err(_) => return util::api_error(ApiErrorCode::InternalError),
+        }
+    } else {
+        None
+    };
+
+    let ok = if let Some(meta) = meta.as_ref() {
+        Ok(true)
+    } else {
+        media::leave(&state.pool, &livekit, session_id, auth.user_id).await
     };
     let ok = match ok {
         Ok(v) => v,
@@ -456,6 +577,51 @@ async fn leave(
     };
     if !ok {
         return util::api_error(ApiErrorCode::NotFound);
+    }
+
+    if let Some(meta) = meta {
+        let now = time::OffsetDateTime::now_utc();
+        let env = events::envelope::EventEnvelope::new(
+            "media.participant.left",
+            status.session.organization_id,
+            Some(auth.user_id),
+            events::media::MediaParticipantLeftData {
+                room_id: status.session.media_room_id,
+                session_id,
+                participant_id: meta.participant_id,
+                user_id: auth.user_id,
+                device_id: meta.device_id.clone(),
+                left_at: now,
+                reason: Some(meta.left_reason.clone()),
+            },
+        );
+        let subject = events::subjects::media_participant_left(
+            status.session.organization_id,
+            status.session.media_room_id,
+            session_id,
+        );
+        let _ = events::core::publish(&state.nats, subject, &env).await;
+
+        if meta.session_ended {
+            let ended_at = meta.ended_at.unwrap_or_else(time::OffsetDateTime::now_utc);
+            let env = events::envelope::EventEnvelope::new(
+                "media.session.ended",
+                status.session.organization_id,
+                Some(auth.user_id),
+                events::media::MediaSessionEndedData {
+                    room_id: status.session.media_room_id,
+                    session_id,
+                    ended_at,
+                    reason: meta.ended_reason.clone(),
+                },
+            );
+            let subject = events::subjects::media_session_ended(
+                status.session.organization_id,
+                status.session.media_room_id,
+                session_id,
+            );
+            let _ = events::core::publish(&state.nats, subject, &env).await;
+        }
     }
 
     (StatusCode::OK, Json(serde_json::json!({"status":"left"}))).into_response()

@@ -72,6 +72,13 @@ impl Runtime {
                     return;
                 }
             };
+            let mut sub_media = match nats.subscribe("org.*.media.room.*.session.*.>").await {
+                Ok(s) => s,
+                Err(e) => {
+                    warn!(?e, "nats subscribe failed (media.*)");
+                    return;
+                }
+            };
 
             loop {
                 tokio::select! {
@@ -97,6 +104,12 @@ impl Runtime {
                         let Some(msg) = msg else { break; };
                         if let Ok(evt) = serde_json::from_slice::<ServerEvent>(&msg.payload) {
                             hub.broadcast_event(&evt);
+                        }
+                    }
+                    msg = sub_media.next() => {
+                        let Some(msg) = msg else { break; };
+                        if let Err(e) = handle_media_event(&hub, msg.payload).await {
+                            debug!(?e, "failed to handle media event");
                         }
                     }
                 }
@@ -128,6 +141,7 @@ struct Hub {
     conns: DashMap<Uuid, ConnHandle>,
     org_index: DashMap<Uuid, DashSet<Uuid>>, // org_id -> conn_ids
     channel_index: DashMap<Uuid, DashSet<Uuid>>, // channel_id -> conn_ids
+    media_room_index: DashMap<Uuid, DashSet<Uuid>>, // room_id -> conn_ids
     typing_gen: DashMap<(Uuid, Uuid), u64>,  // (channel_id, user_id) -> generation
 }
 
@@ -137,6 +151,7 @@ impl Hub {
             conns: DashMap::new(),
             org_index: DashMap::new(),
             channel_index: DashMap::new(),
+            media_room_index: DashMap::new(),
             typing_gen: DashMap::new(),
         }
     }
@@ -159,6 +174,9 @@ impl Hub {
         for item in self.channel_index.iter() {
             item.value().remove(&conn_id);
         }
+        for item in self.media_room_index.iter() {
+            item.value().remove(&conn_id);
+        }
     }
 
     fn broadcast_to_org(&self, org_id: Uuid, evt: &ServerEvent) {
@@ -176,6 +194,19 @@ impl Hub {
 
     fn broadcast_to_channel(&self, channel_id: Uuid, evt: &ServerEvent) {
         let Some(set) = self.channel_index.get(&channel_id) else {
+            return;
+        };
+        for conn_id in set.iter() {
+            if let Some(conn) = self.conns.get(conn_id.key()) {
+                let _ = conn.tx.send(Message::Text(
+                    serde_json::to_string(evt).unwrap_or_default().into(),
+                ));
+            }
+        }
+    }
+
+    fn broadcast_to_media_room(&self, room_id: Uuid, evt: &ServerEvent) {
+        let Some(set) = self.media_room_index.get(&room_id) else {
             return;
         };
         for conn_id in set.iter() {
@@ -208,6 +239,13 @@ impl Hub {
             }
             ServerEvent::TypingStopped { channel_id, .. } => {
                 self.broadcast_to_channel(*channel_id, evt);
+            }
+            ServerEvent::MediaSessionStarted { room_id, .. }
+            | ServerEvent::MediaSessionEnded { room_id, .. }
+            | ServerEvent::MediaParticipantJoined { room_id, .. }
+            | ServerEvent::MediaParticipantLeft { room_id, .. }
+            | ServerEvent::MediaParticipantUpdated { room_id, .. } => {
+                self.broadcast_to_media_room(*room_id, evt);
             }
         }
     }
@@ -382,7 +420,50 @@ async fn handle_client_event(
             emit_typing_stopped(&hub, nats, channel_id, user_id).await;
             Ok(())
         }
+        ClientEvent::MediaSubscribe { room_id } => {
+            let org_id = ensure_media_room_access(pool, user_id, org_ids, room_id).await?;
+            hub.media_room_index.entry(room_id).or_default().insert(conn_id);
+            info!(%user_id, %room_id, %org_id, "subscribed media room");
+            Ok(())
+        }
+        ClientEvent::MediaUnsubscribe { room_id } => {
+            if let Some(set) = hub.media_room_index.get(&room_id) {
+                set.remove(&conn_id);
+            }
+            info!(%user_id, %room_id, "unsubscribed media room");
+            Ok(())
+        }
     }
+}
+
+pub async fn ensure_media_room_access(
+    pool: &PgPool,
+    user_id: Uuid,
+    org_ids: &[Uuid],
+    room_id: Uuid,
+) -> anyhow::Result<Uuid> {
+    let row = sqlx::query_scalar::<_, Uuid>(
+        r#"
+        select r.organization_id
+        from media_rooms r
+        join organization_members m
+          on m.organization_id = r.organization_id
+         and m.user_id = $2
+        where r.id = $1
+        "#,
+    )
+    .bind(room_id)
+    .bind(user_id)
+    .fetch_optional(pool)
+    .await?;
+
+    let Some(org_id) = row else {
+        anyhow::bail!("forbidden");
+    };
+    if !org_ids.contains(&org_id) {
+        anyhow::bail!("forbidden");
+    }
+    Ok(org_id)
 }
 
 fn schedule_typing_expiry(
@@ -610,6 +691,83 @@ async fn handle_message_created(
         message,
     };
     hub.broadcast_event(&evt);
+    Ok(())
+}
+
+async fn handle_media_event(hub: &Hub, payload: bytes::Bytes) -> anyhow::Result<()> {
+    let env: events::envelope::EventEnvelope<serde_json::Value> = serde_json::from_slice(&payload)?;
+
+    match env.event_type.as_str() {
+        "media.session.started" => {
+            let data: events::media::MediaSessionStartedData = serde_json::from_value(env.data)?;
+            let evt = ServerEvent::MediaSessionStarted {
+                organization_id: env.organization_id,
+                room_id: data.room_id,
+                session_id: data.session_id,
+                started_at: data.started_at.to_string(),
+            };
+            hub.broadcast_event(&evt);
+        }
+        "media.session.ended" => {
+            let data: events::media::MediaSessionEndedData = serde_json::from_value(env.data)?;
+            let evt = ServerEvent::MediaSessionEnded {
+                organization_id: env.organization_id,
+                room_id: data.room_id,
+                session_id: data.session_id,
+                ended_at: data.ended_at.to_string(),
+                reason: data.reason,
+            };
+            hub.broadcast_event(&evt);
+        }
+        "media.participant.joined" => {
+            let data: events::media::MediaParticipantJoinedData = serde_json::from_value(env.data)?;
+            let evt = ServerEvent::MediaParticipantJoined {
+                organization_id: env.organization_id,
+                room_id: data.room_id,
+                session_id: data.session_id,
+                participant_id: data.participant_id,
+                user_id: data.user_id,
+                device_id: data.device_id,
+                joined_at: data.joined_at.to_string(),
+                can_subscribe: data.can_subscribe,
+                can_publish_audio: data.can_publish_audio,
+                can_publish_video: data.can_publish_video,
+                can_publish_screen: data.can_publish_screen,
+                can_publish_data: data.can_publish_data,
+            };
+            hub.broadcast_event(&evt);
+        }
+        "media.participant.left" => {
+            let data: events::media::MediaParticipantLeftData = serde_json::from_value(env.data)?;
+            let evt = ServerEvent::MediaParticipantLeft {
+                organization_id: env.organization_id,
+                room_id: data.room_id,
+                session_id: data.session_id,
+                participant_id: data.participant_id,
+                user_id: data.user_id,
+                device_id: data.device_id,
+                left_at: data.left_at.to_string(),
+                reason: data.reason,
+            };
+            hub.broadcast_event(&evt);
+        }
+        "media.participant.updated" => {
+            let data: events::media::MediaParticipantUpdatedData = serde_json::from_value(env.data)?;
+            let evt = ServerEvent::MediaParticipantUpdated {
+                organization_id: env.organization_id,
+                room_id: data.room_id,
+                session_id: data.session_id,
+                participant_id: data.participant_id,
+                user_id: data.user_id,
+                device_id: data.device_id,
+                occurred_at: data.occurred_at.to_string(),
+                last_heartbeat_at: data.last_heartbeat_at.map(|t| t.to_string()),
+            };
+            hub.broadcast_event(&evt);
+        }
+        _ => {}
+    }
+
     Ok(())
 }
 

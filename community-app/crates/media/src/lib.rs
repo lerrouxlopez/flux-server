@@ -153,6 +153,13 @@ pub struct JoinResponse {
     pub granted: GrantedCapabilities,
 }
 
+#[derive(Debug, Clone)]
+pub struct JoinMeta {
+    pub session_started: bool,
+    pub participant_reused: bool,
+    pub device_id: String,
+}
+
 #[derive(Debug, Clone, Serialize)]
 pub struct GrantedCapabilities {
     pub can_subscribe: bool,
@@ -184,6 +191,22 @@ pub async fn join_room(
     let device_id = normalize_device_id(&req.device_id)?;
     let intent = normalize_intent_for_room_kind(room.kind, req.intent);
     let requested = defaults_for_intent(intent);
+    let (resp, _meta) =
+        join_room_internal(pool, livekit, room, user_id, &device_id, user_perms, requested).await?;
+    Ok(resp)
+}
+
+pub async fn join_room_with_meta(
+    pool: &PgPool,
+    livekit: &LiveKitConfig,
+    room: &MediaRoom,
+    user_id: Uuid,
+    user_perms: Perms,
+    req: JoinRequest,
+) -> anyhow::Result<(JoinResponse, JoinMeta)> {
+    let device_id = normalize_device_id(&req.device_id)?;
+    let intent = normalize_intent_for_room_kind(room.kind, req.intent);
+    let requested = defaults_for_intent(intent);
     join_room_internal(pool, livekit, room, user_id, &device_id, user_perms, requested).await
 }
 
@@ -195,7 +218,9 @@ pub async fn join_room_with_requested(
     user_perms: Perms,
     requested: RequestedCapabilities,
 ) -> anyhow::Result<JoinResponse> {
-    join_room_internal(pool, livekit, room, user_id, "unknown", user_perms, requested).await
+    let (resp, _meta) =
+        join_room_internal(pool, livekit, room, user_id, "unknown", user_perms, requested).await?;
+    Ok(resp)
 }
 
 async fn join_room_internal(
@@ -206,7 +231,7 @@ async fn join_room_internal(
     device_id: &str,
     user_perms: Perms,
     requested: RequestedCapabilities,
-) -> anyhow::Result<JoinResponse> {
+) -> anyhow::Result<(JoinResponse, JoinMeta)> {
     let can_join = permissions::has(user_perms, perms::VOICE_JOIN);
     if !can_join {
         anyhow::bail!("permission denied");
@@ -239,8 +264,8 @@ async fn join_room_internal(
     let reconnect_window = reconnect_window_from_env();
 
     // Reuse an active session for the room, or create a new one.
-    let session = get_or_create_active_session(pool, room.organization_id, room.id, user_id, now)
-        .await?;
+    let (session, session_started) =
+        get_or_create_active_session(pool, room.organization_id, room.id, user_id, now).await?;
 
     // Stable per-device identity within a session to prevent duplicate ghosts.
     let identity = livekit_identity(user_id, device_id, session.id);
@@ -287,14 +312,21 @@ async fn join_room_internal(
             &token_req,
         )?;
 
-        return Ok(JoinResponse {
+        return Ok((
+            JoinResponse {
             session_id: session.id,
             participant_id: existing,
             token: token.token,
             livekit_url: token.livekit_url,
             expires_at: now + Duration::seconds(TOKEN_TTL_SECS as i64),
             granted,
-        });
+            },
+            JoinMeta {
+                session_started,
+                participant_reused: true,
+                device_id: device_id.to_string(),
+            },
+        ));
     }
 
     let participant_id = Uuid::now_v7();
@@ -340,14 +372,21 @@ async fn join_room_internal(
         &token_req,
     )?;
 
-    Ok(JoinResponse {
+    Ok((
+        JoinResponse {
         session_id: session.id,
         participant_id,
         token: token.token,
         livekit_url: token.livekit_url,
         expires_at: now + Duration::seconds(TOKEN_TTL_SECS as i64),
         granted,
-    })
+        },
+        JoinMeta {
+            session_started,
+            participant_reused: false,
+            device_id: device_id.to_string(),
+        },
+    ))
 }
 
 fn required_perms_for_requested(req: &RequestedCapabilities) -> Perms {
@@ -551,7 +590,7 @@ pub async fn leave(
     .await?;
 
     // If the session has no remaining active participants, end it.
-    end_session_if_empty(pool, session_id, now, Some("empty")).await?;
+    let _ = end_session_if_empty(pool, session_id, now, Some("empty")).await?;
 
     Ok(res.rows_affected() > 0)
 }
@@ -618,8 +657,88 @@ pub async fn leave_device(
     .execute(pool)
     .await?;
 
-    end_session_if_empty(pool, session_id, now, Some("empty")).await?;
+    let _ = end_session_if_empty(pool, session_id, now, Some("empty")).await?;
     Ok(res.rows_affected() > 0)
+}
+
+#[derive(Debug, Clone)]
+pub struct LeaveMeta {
+    pub participant_id: Uuid,
+    pub device_id: String,
+    pub left_reason: String,
+    pub session_ended: bool,
+    pub ended_reason: Option<String>,
+    pub ended_at: Option<OffsetDateTime>,
+}
+
+pub async fn leave_device_with_meta(
+    pool: &PgPool,
+    livekit: &LiveKitConfig,
+    session_id: Uuid,
+    user_id: Uuid,
+    device_id: &str,
+) -> anyhow::Result<Option<LeaveMeta>> {
+    let device_id_norm = normalize_device_id(device_id)?;
+    let now = OffsetDateTime::now_utc();
+
+    let row = sqlx::query(
+        r#"
+        select p.id, p.identity, r.livekit_room_name
+        from media_participants p
+        join media_sessions s on s.id = p.media_session_id
+        join media_rooms r on r.id = s.media_room_id
+        where p.media_session_id = $1
+          and p.user_id = $2
+          and p.device_id = $3
+          and p.left_at is null
+        order by p.joined_at desc
+        limit 1
+        "#,
+    )
+    .bind(session_id)
+    .bind(user_id)
+    .bind(&device_id_norm)
+    .fetch_optional(pool)
+    .await?;
+
+    let Some(row) = row else {
+        return Ok(None);
+    };
+
+    let participant_id: Uuid = row.get("id");
+    let identity: String = row.get("identity");
+    let room_name: String = row.get("livekit_room_name");
+
+    let _ = remove_participant(livekit, &room_name, &identity).await;
+
+    let res = sqlx::query(
+        r#"
+        update media_participants
+        set left_at = $2, left_reason = 'leave'
+        where id = $1
+          and left_at is null
+        "#,
+    )
+    .bind(participant_id)
+    .bind(now)
+    .execute(pool)
+    .await?;
+
+    if res.rows_affected() == 0 {
+        return Ok(None);
+    }
+
+    let (session_ended, ended_at, ended_reason) =
+        end_session_if_empty(pool, session_id, now, Some("empty")).await?;
+
+    Ok(Some(LeaveMeta {
+        participant_id,
+        device_id: device_id_norm,
+        left_reason: "leave".to_string(),
+        session_ended,
+        ended_reason,
+        ended_at,
+    }))
 }
 
 pub async fn get_session_status(
@@ -840,7 +959,7 @@ async fn get_or_create_active_session(
     media_room_id: Uuid,
     created_by: Uuid,
     now: OffsetDateTime,
-) -> anyhow::Result<MediaSession> {
+) -> anyhow::Result<(MediaSession, bool)> {
     if let Some(row) = sqlx::query(
         r#"
         select id, organization_id, media_room_id, created_by, started_at, ended_at, ended_reason
@@ -855,7 +974,8 @@ async fn get_or_create_active_session(
     .fetch_optional(pool)
     .await?
     {
-        return Ok(MediaSession {
+        return Ok((
+            MediaSession {
             id: row.get("id"),
             organization_id: row.get("organization_id"),
             media_room_id: row.get("media_room_id"),
@@ -863,7 +983,9 @@ async fn get_or_create_active_session(
             started_at: row.get("started_at"),
             ended_at: row.try_get("ended_at").ok(),
             ended_reason: row.try_get::<Option<String>, _>("ended_reason").unwrap_or(None),
-        });
+            },
+            false,
+        ));
     }
 
     let id = Uuid::now_v7();
@@ -881,7 +1003,8 @@ async fn get_or_create_active_session(
     .execute(pool)
     .await?;
 
-    Ok(MediaSession {
+    Ok((
+        MediaSession {
         id,
         organization_id,
         media_room_id,
@@ -889,7 +1012,9 @@ async fn get_or_create_active_session(
         started_at: now,
         ended_at: None,
         ended_reason: None,
-    })
+        },
+        true,
+    ))
 }
 
 async fn end_session_if_empty(
@@ -897,7 +1022,7 @@ async fn end_session_if_empty(
     session_id: Uuid,
     now: OffsetDateTime,
     ended_reason: Option<&str>,
-) -> anyhow::Result<()> {
+) -> anyhow::Result<(bool, Option<OffsetDateTime>, Option<String>)> {
     let active_count: i64 = sqlx::query_scalar(
         r#"
         select count(1)::bigint
@@ -911,15 +1036,16 @@ async fn end_session_if_empty(
     .await?;
 
     if active_count > 0 {
-        return Ok(());
+        return Ok((false, None, None));
     }
 
-    let _ = sqlx::query(
+    let res = sqlx::query(
         r#"
         update media_sessions
         set ended_at = coalesce(ended_at, $2),
             ended_reason = coalesce(ended_reason, $3)
         where id = $1
+          and ended_at is null
         "#,
     )
     .bind(session_id)
@@ -928,7 +1054,21 @@ async fn end_session_if_empty(
     .execute(pool)
     .await?;
 
-    Ok(())
+    if res.rows_affected() == 0 {
+        // Already ended by another path.
+        let row = sqlx::query_as::<_, (Option<OffsetDateTime>, Option<String>)>(
+            r#"select ended_at, ended_reason from media_sessions where id = $1"#,
+        )
+        .bind(session_id)
+        .fetch_optional(pool)
+        .await?;
+        if let Some((ended_at, ended_reason)) = row {
+            return Ok((false, ended_at, ended_reason));
+        }
+        return Ok((false, None, None));
+    }
+
+    Ok((true, Some(now), ended_reason.map(|s| s.to_string())))
 }
 
 #[derive(Debug, Deserialize)]
