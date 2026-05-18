@@ -29,6 +29,7 @@ pub fn build_app(cfg: &config::AppConfig, state: AppState) -> Router {
         .nest("/auth", crate::routes_auth::router())
         .nest("/orgs", crate::routes_orgs::router())
         .merge(crate::routes_audit::router())
+        .merge(crate::routes_attachments::router())
         .merge(crate::routes_channels::router())
         .merge(crate::routes_messages::router())
         .merge(crate::routes_media::router())

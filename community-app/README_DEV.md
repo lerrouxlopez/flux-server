@@ -71,6 +71,10 @@ Web app (Vite):
 - `VITE_REALTIME_TARGET` (dev proxy target for WS, default `http://localhost:8081`)
 - `VITE_BACKEND_ORIGIN` (optional absolute origin used by the built client fetch/WS helpers; if unset it uses relative URLs / `window.location.origin`)
 
+Message attachments (local filesystem backend):
+- `ATTACHMENTS_MAX_BYTES` (default `5242880`)
+- `ATTACHMENTS_DIR` (default `.local/attachments`)
+
 ## Current commands (do not run here; run locally)
 
 From `community-app/`:
@@ -97,4 +101,3 @@ The repo root contains a GitHub Actions workflow that builds/pushes images and S
 
 Server compose/env examples live under:
 - `community-app/deploy/flux/`
-

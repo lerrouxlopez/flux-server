@@ -290,7 +290,7 @@ export function ChannelPage() {
           filename: a.filename,
           content_type: a.content_type ?? null,
           size_bytes: a.data_url.length,
-          data_url: a.data_url,
+          download_url: a.data_url,
           created_at: new Date().toISOString(),
         })) as MessageAttachment[],
         reactions: [] as MessageReaction[],
@@ -1020,20 +1020,20 @@ export function ChannelPage() {
                         {(m.attachments ?? []).length ? (
                           <div className={`${m.body ? "mt-2" : ""} space-y-2`}>
                             {(m.attachments ?? []).map((a) => {
-                              const isImage = (a.content_type ?? "").startsWith("image/") || a.data_url.startsWith("data:image/");
+                              const isImage = (a.content_type ?? "").startsWith("image/");
                               return (
                                 <div key={a.id} className="rounded-xl border border-white/10 bg-black/10 p-2">
                                   {isImage ? (
                                     <img
                                       alt={a.filename}
                                       className="max-h-64 w-auto rounded-lg"
-                                      src={a.data_url}
+                                      src={a.download_url}
                                     />
                                   ) : (
                                     <a
                                       className="text-sm text-indigo-200 underline"
                                       download={a.filename}
-                                      href={a.data_url}
+                                      href={a.download_url}
                                     >
                                       {a.filename}
                                     </a>

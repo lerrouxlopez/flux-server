@@ -4,7 +4,9 @@ use sqlx::PgPool;
 use uuid::Uuid;
 
 pub mod app;
+pub mod attachments_storage;
 pub mod routes_audit;
+pub mod routes_attachments;
 pub mod routes_auth;
 pub mod routes_branding;
 pub mod routes_channels;

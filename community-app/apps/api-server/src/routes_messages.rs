@@ -90,7 +90,7 @@ struct AttachmentResponse {
     filename: String,
     content_type: Option<String>,
     size_bytes: i64,
-    data_url: String,
+    download_url: String,
     created_at: OffsetDateTime,
 }
 
@@ -307,6 +307,8 @@ async fn send_message(
     }
 
     let mut inserted_attachments: Vec<AttachmentResponse> = Vec::new();
+    let validate_cfg = crate::attachments_storage::AttachmentValidationConfig::from_env();
+    let storage = crate::attachments_storage::storage_from_env();
     for a in attachments_in.iter() {
         let filename = a.filename.trim().to_string();
         let data_url = a.data_url.trim().to_string();
@@ -316,23 +318,44 @@ async fn send_message(
         if !data_url.starts_with("data:") {
             return util::api_error(ApiErrorCode::ValidationError);
         }
-        if data_url.len() > 2_000_000 {
-            return util::api_error(ApiErrorCode::ValidationError);
-        }
         let id = Uuid::now_v7();
-        let content_type = a
+        let content_type_req = a
             .content_type
             .as_ref()
             .map(|v| v.trim().to_string())
             .filter(|v| !v.is_empty());
-        let size_bytes = data_url.len() as i64;
+
+        let (parsed_ct, bytes) = match crate::attachments_storage::parse_data_url(&data_url) {
+            Ok(v) => v,
+            Err(e) => return e,
+        };
+        let content_type = content_type_req.or(Some(parsed_ct));
+        let size_bytes = bytes.len() as i64;
+        if bytes.len() > validate_cfg.max_bytes {
+            return util::api_error(ApiErrorCode::ValidationError);
+        }
+
+        // Quota hook (no-op for now).
+        if let Err(e) = crate::util::check_attachment_quota(org_id, size_bytes) {
+            return e;
+        }
+
+        let rel_path = match storage.put(
+            org_id,
+            id,
+            &bytes,
+            crate::attachments_storage::LocalFsAttachmentStorage::guess_ext(&filename),
+        ) {
+            Ok(p) => p,
+            Err(e) => return e,
+        };
 
         let res = sqlx::query(
             r#"
             insert into message_attachments
-              (id, organization_id, message_id, uploader_id, filename, content_type, size_bytes, storage_path, created_at)
+              (id, organization_id, message_id, uploader_id, filename, content_type, size_bytes, storage_kind, storage_path, created_at)
             values
-              ($1, $2, $3, $4, $5, $6, $7, $8, $9)
+              ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)
             "#,
         )
         .bind(id)
@@ -342,7 +365,8 @@ async fn send_message(
         .bind(filename.clone())
         .bind(content_type.clone())
         .bind(size_bytes)
-        .bind(data_url.clone())
+        .bind(storage.kind())
+        .bind(rel_path.clone())
         .bind(now)
         .execute(&mut *tx)
         .await;
@@ -356,7 +380,7 @@ async fn send_message(
             filename,
             content_type,
             size_bytes,
-            data_url,
+            download_url: format!("/attachments/{id}/download"),
             created_at: now,
         });
     }
@@ -439,7 +463,7 @@ async fn fetch_attachments_by_message(
             filename: r.get("filename"),
             content_type: r.get("content_type"),
             size_bytes: r.get("size_bytes"),
-            data_url: r.get("storage_path"),
+            download_url: format!("/attachments/{}/download", r.get::<Uuid, _>("id")),
             created_at: r.get("created_at"),
         });
     }

@@ -566,7 +566,7 @@ async fn leave(
         None
     };
 
-    let ok = if let Some(meta) = meta.as_ref() {
+    let ok = if meta.is_some() {
         Ok(true)
     } else {
         media::leave(&state.pool, &livekit, session_id, auth.user_id).await

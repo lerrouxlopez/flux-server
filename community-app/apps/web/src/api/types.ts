@@ -68,7 +68,7 @@ export type MessageAttachment = {
   filename: string;
   content_type?: string | null;
   size_bytes: number;
-  data_url: string;
+  download_url: string;
   created_at: string;
 };
 
