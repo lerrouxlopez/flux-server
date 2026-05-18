@@ -171,3 +171,18 @@ export type FriendsResponse = { friends: UserSummary[] };
 
 export type DmThread = { channel_id: string; peer: UserSummary };
 export type DmsResponse = { dms: DmThread[] };
+
+export type NotificationBehavior = {
+  message_all: boolean;
+  message_mentions: boolean;
+  thread_replies: boolean;
+  pin_changes: boolean;
+  media_events: boolean;
+};
+
+export type NotificationsContextResponse = {
+  mode: "work" | "play";
+  profile_source: string;
+  profile_id?: string | null;
+  behavior: NotificationBehavior;
+};

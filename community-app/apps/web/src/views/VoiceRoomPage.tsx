@@ -79,8 +79,8 @@ export function VoiceRoomPage() {
   }, [rt, room.data?.id, clearRoom]);
 
   if (room.isLoading || join.isLoading) return <div className="text-slate-300">Connecting…</div>;
-  if (room.isError) return <div className="text-red-400">{(room.error as Error).message}</div>;
-  if (join.isError) return <div className="text-red-400">{(join.error as Error).message}</div>;
+  if (room.isError) return <div className="flux-text-danger">{(room.error as Error).message}</div>;
+  if (join.isError) return <div className="flux-text-danger">{(join.error as Error).message}</div>;
   if (!room.data || !join.data) return <div className="text-slate-300">Missing data.</div>;
 
   const serverUrl = normalizeLiveKitWsUrl(join.data.livekit_url);
@@ -98,7 +98,7 @@ export function VoiceRoomPage() {
       header={<h1 className="min-w-0 truncate text-lg font-semibold">{room.data.name}</h1>}
       footer={
         <div className="flex items-center gap-2">
-          <div className={`text-[11px] ${rtConnected ? "text-emerald-300" : "text-slate-400"}`}>{rtConnected ? "Realtime" : "Realtime…"}</div>
+          <div className={`text-[11px] ${rtConnected ? "flux-text-success" : "text-slate-400"}`}>{rtConnected ? "Realtime" : "Realtime…"}</div>
           <DeviceSetupDialog />
         </div>
       }

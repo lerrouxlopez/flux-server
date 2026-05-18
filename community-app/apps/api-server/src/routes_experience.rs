@@ -9,7 +9,6 @@ use axum::{
 };
 use permissions::perms;
 use serde::{Deserialize, Serialize};
-use sqlx::Row;
 use tracing::Span;
 use uuid::Uuid;
 
@@ -242,4 +241,3 @@ async fn resolve_mode(
 
     Ok(("work".to_string(), "preset_default".to_string()))
 }
-

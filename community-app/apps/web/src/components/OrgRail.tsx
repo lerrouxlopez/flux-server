@@ -42,7 +42,7 @@ export function OrgRail() {
               to={`/app/${o.slug}`}
               title={o.name}
               className={`grid h-10 w-10 place-items-center rounded-xl text-xs font-semibold ${
-                active ? "bg-indigo-600 text-white" : "bg-slate-900 text-slate-200 hover:bg-slate-800"
+                active ? "flux-btn-primary" : "bg-slate-900 text-slate-200 hover:bg-slate-800"
               }`}
             >
               {orgInitials(o.name)}

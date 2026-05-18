@@ -24,7 +24,7 @@ export function WorkShell({ e }: { e: ChannelEngine }) {
             ) : (
               <div className="flex items-center gap-2">
                 <input
-                  className="w-[240px] rounded-md border border-slate-700 bg-slate-950/40 px-2 py-1 text-sm text-slate-100 outline-none focus:border-indigo-500"
+                  className="flux-input w-[240px] rounded-md border px-2 py-1 text-sm outline-none"
                   value={e.channelNameDraft}
                   onChange={(ev) => e.setChannelNameDraft(ev.target.value)}
                   onKeyDown={(ev) => {
@@ -39,7 +39,7 @@ export function WorkShell({ e }: { e: ChannelEngine }) {
                   aria-label="Channel name"
                 />
                 <Button
-                  className="bg-indigo-600 px-2 py-1 text-xs hover:bg-indigo-500"
+                  className="flux-btn-primary px-2 py-1 text-xs"
                   disabled={e.updateChannel.isPending || !e.channelNameDraft.trim()}
                   onClick={() => e.updateChannel.mutate({ name: e.channelNameDraft.trim() })}
                   type="button"
@@ -109,7 +109,7 @@ export function WorkShell({ e }: { e: ChannelEngine }) {
                 Threads
               </button>
               <button
-                className="rounded-md bg-indigo-600 px-2 py-1 text-xs font-semibold text-white hover:bg-indigo-500 disabled:opacity-50"
+                className="flux-btn-primary rounded-md px-2 py-1 text-xs font-semibold disabled:opacity-50"
                 disabled={e.createMeeting.isPending}
                 onClick={() => e.createMeeting.mutate()}
                 title="Start meeting"
@@ -141,7 +141,7 @@ export function WorkShell({ e }: { e: ChannelEngine }) {
         {e.workPane === "search" && e.workSearchOpen ? (
           <div className="mt-3 flex items-center gap-2 rounded-lg border border-slate-800 bg-slate-950/30 px-3 py-2">
             <input
-              className="w-full rounded-md border border-slate-800 bg-slate-900 px-3 py-2 text-sm text-slate-200 outline-none focus:border-indigo-500"
+              className="flux-input w-full rounded-md border px-3 py-2 text-sm outline-none"
               placeholder="Search messages in this channel..."
               value={e.workSearch}
               onChange={(ev) => e.setWorkSearch(ev.target.value)}
@@ -271,10 +271,10 @@ export function WorkShell({ e }: { e: ChannelEngine }) {
                             value={e.threadDraft}
                             placeholder="Reply in thread..."
                             onChange={(ev) => e.setThreadDraft(ev.target.value)}
-                            className="min-h-[60px] flex-1 resize-none rounded-md border border-slate-800 bg-slate-900 px-3 py-2 text-sm text-slate-200 outline-none focus:border-indigo-500"
+                            className="flux-input min-h-[60px] flex-1 resize-none rounded-md border px-3 py-2 text-sm outline-none"
                           />
                           <Button
-                            className="bg-indigo-600 px-3 py-2 text-xs hover:bg-indigo-500"
+                            className="flux-btn-primary px-3 py-2 text-xs"
                             disabled={e.replyToThread.isPending || !e.threadDraft.trim()}
                             type="submit"
                           >
@@ -301,10 +301,10 @@ export function WorkShell({ e }: { e: ChannelEngine }) {
                         value={e.newThreadDraft}
                         placeholder="Start a new thread..."
                         onChange={(ev) => e.setNewThreadDraft(ev.target.value)}
-                        className="min-h-[60px] flex-1 resize-none rounded-md border border-slate-800 bg-slate-900 px-3 py-2 text-sm text-slate-200 outline-none focus:border-indigo-500"
+                        className="flux-input min-h-[60px] flex-1 resize-none rounded-md border px-3 py-2 text-sm outline-none"
                       />
                       <Button
-                        className="bg-indigo-600 px-3 py-2 text-xs hover:bg-indigo-500"
+                        className="flux-btn-primary px-3 py-2 text-xs"
                         disabled={e.createThread.isPending || !e.newThreadDraft.trim()}
                         type="submit"
                       >
@@ -411,7 +411,7 @@ function MessageList({ e }: { e: ChannelEngine }) {
                       </button>
                       <button
                         className={`grid h-7 w-7 place-items-center rounded-full ${
-                          isPinned ? "bg-indigo-500/20 text-indigo-100" : "hover:bg-slate-900"
+                          isPinned ? "flux-chip-active" : "hover:bg-slate-900"
                         }`}
                         onClick={() => {
                           if (isPinned) e.unpin.mutate(m.id);
@@ -468,7 +468,7 @@ function MessageList({ e }: { e: ChannelEngine }) {
                             {isImage ? (
                               <img alt={a.filename} className="max-h-64 w-auto rounded-lg" src={a.download_url} />
                             ) : (
-                              <a className="text-sm text-indigo-200 underline" download={a.filename} href={a.download_url}>
+                              <a className="flux-link text-sm" download={a.filename} href={a.download_url}>
                                 {a.filename}
                               </a>
                             )}
@@ -492,7 +492,7 @@ function Composer({ e, density }: { e: ChannelEngine; density: "comfortable" | "
   return (
     <form className="mt-4" onSubmit={e.onSubmit}>
       <div
-        className={`flex items-end gap-2 rounded-xl border border-slate-800 bg-slate-950/30 px-3 py-2 focus-within:border-indigo-500/70 focus-within:ring-1 focus-within:ring-indigo-500/30 ${
+        className={`flux-focus-within flex items-end gap-2 rounded-xl border border-slate-800 bg-slate-950/30 px-3 py-2 ${
           density === "compact" ? "text-sm" : "text-sm"
         }`}
       >
@@ -526,7 +526,7 @@ function Composer({ e, density }: { e: ChannelEngine; density: "comfortable" | "
         <div className="mx-1 h-6 w-px bg-slate-800" />
         <button
           className={`grid h-9 w-9 place-items-center rounded-md text-sm ${
-            e.send.isPending ? "bg-slate-800 text-slate-400" : "bg-indigo-600 text-white hover:bg-indigo-500"
+            e.send.isPending ? "bg-slate-800 text-slate-400" : "flux-btn-primary"
           }`}
           disabled={e.send.isPending}
           type="submit"

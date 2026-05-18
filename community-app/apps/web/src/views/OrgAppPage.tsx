@@ -67,7 +67,12 @@ export function OrgAppPage() {
       />
 
       <section className="rounded-xl border border-slate-800 bg-slate-900/30 p-4">
-        <div className="text-lg font-semibold">Client</div>
+        <div className="flex items-center justify-between gap-2">
+          <div className="text-lg font-semibold">Client</div>
+          <Link className="flux-link text-sm" to={`/app/${org.slug}/settings/notifications`}>
+            Notifications
+          </Link>
+        </div>
         <div className="mt-4 flex flex-wrap gap-2">
           {(channels.data?.channels ?? []).length ? (
             <>

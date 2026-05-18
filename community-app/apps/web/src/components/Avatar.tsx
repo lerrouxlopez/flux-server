@@ -33,7 +33,7 @@ export function Avatar(props: {
       )}
       {typeof props.online === "boolean" ? (
         <span
-          className={`absolute bottom-0 right-0 h-3 w-3 rounded-full ${props.online ? "bg-emerald-400" : "bg-slate-500"}`}
+          className={`absolute bottom-0 right-0 h-3 w-3 rounded-full ${props.online ? "flux-dot-online" : "flux-dot-offline"}`}
           style={{
             boxShadow: "0 0 0 2px var(--app-bg, #0f172a)",
           }}

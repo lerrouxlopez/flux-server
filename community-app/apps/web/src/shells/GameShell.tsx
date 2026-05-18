@@ -25,7 +25,7 @@ export function GameShell({ e }: { e: ChannelEngine }) {
 
           <div className="flex items-center gap-2">
             <button
-              className="rounded-md bg-indigo-600 px-3 py-2 text-xs font-semibold text-white hover:bg-indigo-500 disabled:opacity-50"
+              className="flux-btn-primary rounded-md px-3 py-2 text-xs font-semibold disabled:opacity-50"
               disabled={e.createMeeting.isPending}
               onClick={() => e.createMeeting.mutate()}
               type="button"
@@ -112,7 +112,7 @@ export function GameShell({ e }: { e: ChannelEngine }) {
                           ))}
                           <button
                             className={`grid h-7 w-7 place-items-center rounded-full ${
-                              isPinned ? "bg-indigo-500/20 text-indigo-100" : "hover:bg-slate-900"
+                              isPinned ? "flux-chip-active" : "hover:bg-slate-900"
                             }`}
                             onClick={() => {
                               if (isPinned) e.unpin.mutate(m.id);
@@ -149,10 +149,10 @@ export function GameShell({ e }: { e: ChannelEngine }) {
                                   {isImage ? (
                                     <img alt={a.filename} className="max-h-64 w-auto rounded-lg" src={a.download_url} />
                                   ) : (
-                                    <a className="text-sm text-indigo-200 underline" download={a.filename} href={a.download_url}>
-                                      {a.filename}
-                                    </a>
-                                  )}
+                                  <a className="flux-link text-sm" download={a.filename} href={a.download_url}>
+                                    {a.filename}
+                                  </a>
+                                )}
                                 </div>
                               );
                             })}
@@ -165,7 +165,7 @@ export function GameShell({ e }: { e: ChannelEngine }) {
                             key={r.emoji}
                             className={`rounded-full border px-2 py-0.5 text-xs ${
                               r.reacted_by_me
-                                ? "border-indigo-500/60 bg-indigo-500/20 text-indigo-100"
+                                ? "flux-chip-active"
                                 : "border-slate-700 bg-slate-900/40 text-slate-200 hover:bg-slate-800/60"
                             }`}
                             onClick={() => {
@@ -191,7 +191,7 @@ export function GameShell({ e }: { e: ChannelEngine }) {
         {e.typingText ? <div className="mt-2 text-xs text-slate-400">{e.typingText}</div> : null}
 
         <form className="mt-3" onSubmit={e.onSubmit}>
-          <div className="flex items-end gap-2 rounded-xl border border-slate-800 bg-slate-950/30 px-3 py-2 focus-within:border-indigo-500/70 focus-within:ring-1 focus-within:ring-indigo-500/30">
+          <div className="flux-focus-within flex items-end gap-2 rounded-xl border border-slate-800 bg-slate-950/30 px-3 py-2">
             <TextArea
               ref={e.textAreaRef}
               rows={1}
@@ -221,7 +221,7 @@ export function GameShell({ e }: { e: ChannelEngine }) {
             </button>
             <button
               className={`grid h-9 w-9 place-items-center rounded-md text-sm ${
-                e.send.isPending ? "bg-slate-800 text-slate-400" : "bg-indigo-600 text-white hover:bg-indigo-500"
+                e.send.isPending ? "bg-slate-800 text-slate-400" : "flux-btn-primary"
               }`}
               disabled={e.send.isPending}
               type="submit"

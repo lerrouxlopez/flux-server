@@ -243,7 +243,7 @@ export function OrgSidebar(props: {
               <div key={m.user_id} className="flex items-center justify-between rounded-md px-2 py-1 text-sm">
                 <div className="flex min-w-0 items-center gap-2">
                   {props.presenceByUser ? (
-                    <span className={`h-2 w-2 rounded-full ${online ? "bg-emerald-400" : "bg-slate-600"}`} />
+                    <span className={`h-2 w-2 rounded-full ${online ? "flux-dot-online" : "flux-dot-offline"}`} />
                   ) : null}
                   <span className="truncate text-slate-200">{m.display_name}</span>
                 </div>
@@ -260,7 +260,7 @@ export function OrgSidebar(props: {
                       </Button>
                     ) : incomingReq ? (
                       <Button
-                        className="bg-indigo-600 px-2 py-1 text-xs hover:bg-indigo-500"
+                        className="flux-btn-primary px-2 py-1 text-xs"
                         disabled={acceptFriendRequest.isPending}
                         onClick={() => acceptFriendRequest.mutate(incomingReq.id)}
                         type="button"
@@ -299,7 +299,7 @@ export function OrgSidebar(props: {
         ) : null}
         {openDm.data?.channel_id ? (
           <div className="mt-2 px-2">
-            <Link className="text-xs text-indigo-400 hover:underline" to={`/app/${props.org.slug}/channels/${openDm.data.channel_id}`}>
+            <Link className="flux-link text-xs" to={`/app/${props.org.slug}/channels/${openDm.data.channel_id}`}>
               Open DM
             </Link>
           </div>

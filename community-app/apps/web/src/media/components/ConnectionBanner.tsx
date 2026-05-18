@@ -8,12 +8,12 @@ export function ConnectionBanner(props: {
 }) {
   const tone =
     props.status === "failed"
-      ? "border-red-900/40 bg-red-950/30 text-red-200"
+      ? "flux-status-danger"
       : props.status === "reconnecting" || props.status === "connecting"
-        ? "border-amber-900/40 bg-amber-950/20 text-amber-200"
+        ? "flux-status-warning"
         : props.status === "ended"
           ? "border-slate-800 bg-slate-950/30 text-slate-200"
-          : "border-emerald-900/30 bg-emerald-950/10 text-emerald-200";
+          : "flux-status-success";
 
   const label =
     props.status === "connecting"
@@ -57,4 +57,3 @@ export function ConnectionBanner(props: {
     </div>
   );
 }
-
