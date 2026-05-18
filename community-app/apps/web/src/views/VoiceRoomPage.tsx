@@ -4,7 +4,7 @@ import { LiveKitRoom, VideoConference } from "@livekit/components-react";
 import "@livekit/components-styles";
 import { useState } from "react";
 import { apiFetch } from "../api/client";
-import type { TokenResponse, MediaRoom } from "../api/types";
+import type { JoinResponse, MediaRoom } from "../api/types";
 
 function normalizeLiveKitWsUrl(url: string) {
   const trimmed = url.trim().replace(/\/+$/, "");
@@ -32,9 +32,11 @@ export function VoiceRoomPage() {
     enabled: !!room.data?.id,
     queryKey: ["livekitToken", room_id],
     queryFn: () =>
-      apiFetch<TokenResponse>(`/media/rooms/${room_id}/token`, {
+      apiFetch<JoinResponse>(`/media/rooms/${room_id}/join`, {
         method: "POST",
-        body: JSON.stringify({ can_publish: true, can_subscribe: true, can_publish_data: true }),
+        body: JSON.stringify({
+          intent: room.data?.kind === "stage" ? "stage_viewer" : room.data?.kind === "voice" ? "voice_only" : "video",
+        }),
       }),
   });
 

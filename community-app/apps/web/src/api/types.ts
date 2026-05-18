@@ -64,6 +64,23 @@ export type MediaRoom = {
 
 export type TokenResponse = { token: string; livekit_url: string };
 
+export type JoinGranted = {
+  can_subscribe: boolean;
+  can_publish_audio: boolean;
+  can_publish_video: boolean;
+  can_publish_screen: boolean;
+  can_publish_data: boolean;
+};
+
+export type JoinResponse = {
+  session_id: string;
+  participant_id: string;
+  token: string;
+  livekit_url: string;
+  expires_at: string;
+  granted: JoinGranted;
+};
+
 export type Member = { user_id: string; email: string; display_name: string; role: string; joined_at: string };
 export type MembersResponse = { members: Member[] };
 

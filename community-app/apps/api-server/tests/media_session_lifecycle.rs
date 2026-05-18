@@ -132,7 +132,7 @@ async fn join_heartbeat_leave_success() {
         .uri(format!("/media/rooms/{room_id}/join"))
         .header("content-type", "application/json")
         .header("authorization", format!("Bearer {t1}"))
-        .body(Body::from(serde_json::json!({ "intent": "voice" }).to_string()))
+        .body(Body::from(serde_json::json!({ "intent": "voice_only" }).to_string()))
         .unwrap();
     let res = app.clone().oneshot(req).await.unwrap();
     assert!(res.status().is_success());
@@ -196,7 +196,7 @@ async fn unauthorized_join_when_not_member() {
         .uri(format!("/media/rooms/{room_id}/join"))
         .header("content-type", "application/json")
         .header("authorization", format!("Bearer {t2}"))
-        .body(Body::from(serde_json::json!({ "intent": "voice" }).to_string()))
+        .body(Body::from(serde_json::json!({ "intent": "voice_only" }).to_string()))
         .unwrap();
     let res = app.clone().oneshot(req).await.unwrap();
     assert_eq!(res.status(), axum::http::StatusCode::FORBIDDEN);
@@ -260,7 +260,7 @@ async fn unauthorized_join_when_member_lacks_voice_join_perm() {
         .uri(format!("/media/rooms/{room_id}/join"))
         .header("content-type", "application/json")
         .header("authorization", format!("Bearer {t2}"))
-        .body(Body::from(serde_json::json!({ "intent": "voice" }).to_string()))
+        .body(Body::from(serde_json::json!({ "intent": "voice_only" }).to_string()))
         .unwrap();
     let res = app.clone().oneshot(req).await.unwrap();
     assert_eq!(res.status(), axum::http::StatusCode::FORBIDDEN);
@@ -295,7 +295,7 @@ async fn tenant_isolation_join_denied() {
         .uri(format!("/media/rooms/{room1_id}/join"))
         .header("content-type", "application/json")
         .header("authorization", format!("Bearer {t2}"))
-        .body(Body::from(serde_json::json!({ "intent": "voice" }).to_string()))
+        .body(Body::from(serde_json::json!({ "intent": "voice_only" }).to_string()))
         .unwrap();
     let res = app.clone().oneshot(req).await.unwrap();
     assert_eq!(res.status(), axum::http::StatusCode::FORBIDDEN);
@@ -404,4 +404,3 @@ async fn stale_cleanup_helper_marks_left() {
     .unwrap();
     assert_eq!(left_reason.as_deref(), Some("stale"));
 }
-

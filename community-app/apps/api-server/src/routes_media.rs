@@ -196,20 +196,17 @@ async fn issue_token(
         );
     let publish_screen = publish_video;
 
-    let join_req = media::JoinRequest {
-        intent: if matches!(room.kind, domain::MediaRoomKind::Voice) {
-            media::JoinIntent::Voice
-        } else {
-            media::JoinIntent::Meeting
-        },
-        publish_audio: Some(req.can_publish),
-        publish_video: Some(publish_video),
-        publish_screen: Some(publish_screen),
-        publish_data: Some(req.can_publish_data),
-        subscribe: Some(req.can_subscribe),
+    // Preserve legacy semantics: treat the body booleans as "requested" (not trusted),
+    // then cap by room kind + permission bits server-side.
+    let requested = media::RequestedCapabilities {
+        subscribe: req.can_subscribe,
+        publish_audio: req.can_publish,
+        publish_video: publish_video,
+        publish_screen: publish_screen,
+        publish_data: req.can_publish_data,
     };
 
-    let joined = match media::join_room(
+    let joined = match media::join_room_with_requested(
         &state.pool,
         &media::LiveKitConfig {
             internal_url: state.livekit_url_internal.clone(),
@@ -220,7 +217,7 @@ async fn issue_token(
         &room,
         auth.user_id,
         perms,
-        join_req,
+        requested,
     )
     .await
     {
@@ -281,16 +278,6 @@ async fn list_participants(
 #[derive(Debug, Deserialize)]
 struct JoinRoomRequest {
     intent: String,
-    #[serde(default)]
-    publish_audio: Option<bool>,
-    #[serde(default)]
-    publish_video: Option<bool>,
-    #[serde(default)]
-    publish_screen: Option<bool>,
-    #[serde(default)]
-    publish_data: Option<bool>,
-    #[serde(default)]
-    subscribe: Option<bool>,
 }
 
 async fn join_room(
@@ -319,8 +306,11 @@ async fn join_room(
     }
 
     let intent = match req.intent.trim().to_lowercase().as_str() {
-        "voice" => media::JoinIntent::Voice,
-        "meeting" => media::JoinIntent::Meeting,
+        "voice_only" => media::JoinIntent::VoiceOnly,
+        "video" => media::JoinIntent::Video,
+        "screen_share" => media::JoinIntent::ScreenShare,
+        "stage_viewer" => media::JoinIntent::StageViewer,
+        "stage_speaker" => media::JoinIntent::StageSpeaker,
         _ => return util::api_error(ApiErrorCode::ValidationError),
     };
 
@@ -335,14 +325,7 @@ async fn join_room(
         &room,
         auth.user_id,
         perms,
-        media::JoinRequest {
-            intent,
-            publish_audio: req.publish_audio,
-            publish_video: req.publish_video,
-            publish_screen: req.publish_screen,
-            publish_data: req.publish_data,
-            subscribe: req.subscribe,
-        },
+        media::JoinRequest { intent },
     )
     .await
     {

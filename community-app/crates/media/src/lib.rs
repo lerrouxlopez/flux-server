@@ -128,24 +128,17 @@ pub async fn get_media_room(pool: &PgPool, room_id: Uuid) -> anyhow::Result<Opti
 #[derive(Debug, Clone, Copy, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum JoinIntent {
-    Voice,
-    Meeting,
+    VoiceOnly,
+    Video,
+    ScreenShare,
+    StageViewer,
+    StageSpeaker,
 }
 
 #[derive(Debug, Clone, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub struct JoinRequest {
     pub intent: JoinIntent,
-    #[serde(default)]
-    pub publish_audio: Option<bool>,
-    #[serde(default)]
-    pub publish_video: Option<bool>,
-    #[serde(default)]
-    pub publish_screen: Option<bool>,
-    #[serde(default)]
-    pub publish_data: Option<bool>,
-    #[serde(default)]
-    pub subscribe: Option<bool>,
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -186,17 +179,42 @@ pub async fn join_room(
         anyhow::bail!("permission denied");
     }
 
-    let defaults = defaults_for_intent(room.kind, req.intent);
-    let requested = RequestedCapabilities {
-        subscribe: req.subscribe.unwrap_or(defaults.subscribe),
-        publish_audio: req.publish_audio.unwrap_or(defaults.publish_audio),
-        publish_video: req.publish_video.unwrap_or(defaults.publish_video),
-        publish_screen: req.publish_screen.unwrap_or(defaults.publish_screen),
-        publish_data: req.publish_data.unwrap_or(defaults.publish_data),
-    };
+    let intent = normalize_intent_for_room_kind(room.kind, req.intent);
+    let requested = defaults_for_intent(intent);
+    join_room_internal(pool, livekit, room, user_id, user_perms, requested).await
+}
+
+pub async fn join_room_with_requested(
+    pool: &PgPool,
+    livekit: &LiveKitConfig,
+    room: &MediaRoom,
+    user_id: Uuid,
+    user_perms: Perms,
+    requested: RequestedCapabilities,
+) -> anyhow::Result<JoinResponse> {
+    join_room_internal(pool, livekit, room, user_id, user_perms, requested).await
+}
+
+async fn join_room_internal(
+    pool: &PgPool,
+    livekit: &LiveKitConfig,
+    room: &MediaRoom,
+    user_id: Uuid,
+    user_perms: Perms,
+    requested: RequestedCapabilities,
+) -> anyhow::Result<JoinResponse> {
+    let can_join = permissions::has(user_perms, perms::VOICE_JOIN);
+    if !can_join {
+        anyhow::bail!("permission denied");
+    }
+
+    let required = required_perms_for_requested(&requested);
+    if !permissions::has(user_perms, required) {
+        anyhow::bail!("permission denied");
+    }
 
     // Ignore/downgrade: cap requested capabilities by permission bits.
-    let granted = GrantedCapabilities {
+    let mut granted = GrantedCapabilities {
         can_subscribe: requested.subscribe,
         can_publish_audio: requested.publish_audio
             && permissions::has(user_perms, perms::VOICE_SPEAK),
@@ -206,6 +224,12 @@ pub async fn join_room(
             && permissions::has(user_perms, perms::SCREEN_SHARE),
         can_publish_data: requested.publish_data && permissions::has(user_perms, perms::VOICE_SPEAK),
     };
+
+    // Final cap by room kind.
+    if matches!(room.kind, MediaRoomKind::Voice) {
+        granted.can_publish_video = false;
+        granted.can_publish_screen = false;
+    }
 
     let now = OffsetDateTime::now_utc();
 
@@ -242,7 +266,9 @@ pub async fn join_room(
     .await?;
 
     let token_req = TokenRequest {
-        can_publish: granted.can_publish_audio || granted.can_publish_video || granted.can_publish_screen,
+        can_publish: granted.can_publish_audio
+            || granted.can_publish_video
+            || granted.can_publish_screen,
         can_subscribe: granted.can_subscribe,
         can_publish_data: granted.can_publish_data,
     };
@@ -261,6 +287,22 @@ pub async fn join_room(
         expires_at: now + Duration::seconds(TOKEN_TTL_SECS as i64),
         granted,
     })
+}
+
+fn required_perms_for_requested(req: &RequestedCapabilities) -> Perms {
+    let mut needed = perms::VOICE_JOIN;
+
+    if req.publish_audio || req.publish_data {
+        needed |= perms::VOICE_SPEAK;
+    }
+    if req.publish_video {
+        needed |= perms::VIDEO_START;
+    }
+    if req.publish_screen {
+        needed |= perms::SCREEN_SHARE;
+    }
+
+    needed
 }
 
 pub async fn heartbeat(
@@ -472,36 +514,66 @@ pub async fn cleanup_stale_participants(
 }
 
 #[derive(Debug, Clone, Copy)]
-struct RequestedCapabilities {
-    subscribe: bool,
-    publish_audio: bool,
-    publish_video: bool,
-    publish_screen: bool,
-    publish_data: bool,
+#[derive(Debug, Clone, Copy)]
+pub struct RequestedCapabilities {
+    pub subscribe: bool,
+    pub publish_audio: bool,
+    pub publish_video: bool,
+    pub publish_screen: bool,
+    pub publish_data: bool,
 }
 
-fn defaults_for_intent(room_kind: MediaRoomKind, intent: JoinIntent) -> RequestedCapabilities {
-    match (room_kind, intent) {
-        (MediaRoomKind::Voice, JoinIntent::Voice) => RequestedCapabilities {
+fn defaults_for_intent(intent: JoinIntent) -> RequestedCapabilities {
+    match intent {
+        JoinIntent::VoiceOnly => RequestedCapabilities {
             subscribe: true,
             publish_audio: true,
             publish_video: false,
             publish_screen: false,
             publish_data: true,
         },
-        (_, JoinIntent::Meeting) => RequestedCapabilities {
+        JoinIntent::Video => RequestedCapabilities {
+            subscribe: true,
+            publish_audio: true,
+            publish_video: true,
+            publish_screen: false,
+            publish_data: true,
+        },
+        JoinIntent::ScreenShare => RequestedCapabilities {
             subscribe: true,
             publish_audio: true,
             publish_video: true,
             publish_screen: true,
             publish_data: true,
         },
-        _ => RequestedCapabilities {
+        JoinIntent::StageViewer => RequestedCapabilities {
             subscribe: true,
-            publish_audio: true,
+            publish_audio: false,
             publish_video: false,
             publish_screen: false,
+            publish_data: false,
+        },
+        JoinIntent::StageSpeaker => RequestedCapabilities {
+            subscribe: true,
+            publish_audio: true,
+            publish_video: true,
+            publish_screen: false,
             publish_data: true,
+        },
+    }
+}
+
+fn normalize_intent_for_room_kind(room_kind: MediaRoomKind, intent: JoinIntent) -> JoinIntent {
+    match room_kind {
+        MediaRoomKind::Voice => JoinIntent::VoiceOnly,
+        MediaRoomKind::Meeting => match intent {
+            JoinIntent::StageViewer | JoinIntent::StageSpeaker => JoinIntent::Video,
+            other => other,
+        },
+        MediaRoomKind::Stage => match intent {
+            JoinIntent::StageViewer | JoinIntent::StageSpeaker => intent,
+            JoinIntent::VoiceOnly => JoinIntent::StageSpeaker,
+            JoinIntent::Video | JoinIntent::ScreenShare => JoinIntent::StageSpeaker,
         },
     }
 }
