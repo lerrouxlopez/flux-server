@@ -25,6 +25,7 @@ export type Message = {
   organization_id: string;
   channel_id: string;
   sender_id: string;
+  thread_id?: string | null;
   body: string | null;
   kind: string;
   attachments?: MessageAttachment[];
@@ -36,12 +37,38 @@ export type Message = {
 
 export type ListMessagesResponse = { messages: Message[]; next_cursor?: string | null };
 
+export type Thread = {
+  id: string;
+  organization_id: string;
+  channel_id: string;
+  root_message_id: string;
+  created_by: string;
+  created_at: string;
+  last_reply_at?: string | null;
+};
+
+export type ThreadWithMessagesResponse = {
+  thread: Thread;
+  root: Message | null;
+  replies: Message[];
+};
+
+export type ThreadsListResponse = {
+  threads: { thread: Thread; root: Message | null; reply_count: number }[];
+};
+
+export type PinsResponse = {
+  pins: { message_id: string; pinned_by: string; pinned_at: string; message: Message }[];
+};
+
+export type ChannelSearchResponse = { messages: Message[] };
+
 export type MessageAttachment = {
   id: string;
   filename: string;
   content_type?: string | null;
   size_bytes: number;
-  data_url: string;
+  download_url: string;
   created_at: string;
 };
 
@@ -63,6 +90,23 @@ export type MediaRoom = {
 };
 
 export type TokenResponse = { token: string; livekit_url: string };
+
+export type JoinGranted = {
+  can_subscribe: boolean;
+  can_publish_audio: boolean;
+  can_publish_video: boolean;
+  can_publish_screen: boolean;
+  can_publish_data: boolean;
+};
+
+export type JoinResponse = {
+  session_id: string;
+  participant_id: string;
+  token: string;
+  livekit_url: string;
+  expires_at: string;
+  granted: JoinGranted;
+};
 
 export type Member = { user_id: string; email: string; display_name: string; role: string; joined_at: string };
 export type MembersResponse = { members: Member[] };
@@ -127,3 +171,18 @@ export type FriendsResponse = { friends: UserSummary[] };
 
 export type DmThread = { channel_id: string; peer: UserSummary };
 export type DmsResponse = { dms: DmThread[] };
+
+export type NotificationBehavior = {
+  message_all: boolean;
+  message_mentions: boolean;
+  thread_replies: boolean;
+  pin_changes: boolean;
+  media_events: boolean;
+};
+
+export type NotificationsContextResponse = {
+  mode: "work" | "play";
+  profile_source: string;
+  profile_id?: string | null;
+  behavior: NotificationBehavior;
+};

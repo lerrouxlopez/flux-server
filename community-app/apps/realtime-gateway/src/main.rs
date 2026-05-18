@@ -12,8 +12,7 @@ use tower_http::trace::TraceLayer;
 use tracing::{info, warn};
 use uuid::Uuid;
 
-mod protocol;
-mod runtime;
+use realtime_gateway::{protocol, runtime};
 
 #[derive(Clone)]
 struct AppState {
@@ -107,6 +106,8 @@ async fn ws_handler(
     }
 
     ws.on_upgrade(move |socket| async move {
+        metrics::gauge!("ws_connections_active").increment(1.0);
+        metrics::counter!("ws_connections_accepted_total").increment(1);
         if let Err(err) = state
             .rt
             .handle_socket(
@@ -122,7 +123,9 @@ async fn ws_handler(
             .await
         {
             warn!(?err, "ws session ended with error");
+            metrics::counter!("ws_sessions_error_total").increment(1);
         }
+        metrics::gauge!("ws_connections_active").decrement(1.0);
     })
 }
 

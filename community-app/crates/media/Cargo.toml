@@ -12,6 +12,7 @@ events = { path = "../events" }
 livekit-api = "0.4.19"
 permissions = { path = "../permissions" }
 reqwest.workspace = true
+metrics.workspace = true
 serde.workspace = true
 serde_json.workspace = true
 sqlx.workspace = true

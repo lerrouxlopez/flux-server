@@ -74,6 +74,7 @@ struct MessageResponse {
     organization_id: Uuid,
     channel_id: Uuid,
     sender_id: Uuid,
+    thread_id: Option<Uuid>,
     body: Option<String>,
     kind: String,
     attachments: Vec<AttachmentResponse>,
@@ -89,7 +90,7 @@ struct AttachmentResponse {
     filename: String,
     content_type: Option<String>,
     size_bytes: i64,
-    data_url: String,
+    download_url: String,
     created_at: OffsetDateTime,
 }
 
@@ -136,15 +137,17 @@ async fn list_messages(
     let rows = if let Some((created_at, id)) = cursor {
         sqlx::query(
             r#"
-            select id, organization_id, channel_id, sender_id, body, kind, created_at, edited_at, deleted_at
+            select id, organization_id, channel_id, sender_id, thread_id, body, kind, created_at, edited_at, deleted_at
             from messages
-            where channel_id = $1
+            where organization_id = $1
+              and channel_id = $2
               and deleted_at is null
-              and (created_at, id) < ($2, $3)
+              and (created_at, id) < ($3, $4)
             order by created_at desc, id desc
-            limit $4
+            limit $5
             "#,
         )
+        .bind(org_id)
         .bind(channel_id)
         .bind(created_at)
         .bind(id)
@@ -154,14 +157,16 @@ async fn list_messages(
     } else {
         sqlx::query(
             r#"
-            select id, organization_id, channel_id, sender_id, body, kind, created_at, edited_at, deleted_at
+            select id, organization_id, channel_id, sender_id, thread_id, body, kind, created_at, edited_at, deleted_at
             from messages
-            where channel_id = $1
+            where organization_id = $1
+              and channel_id = $2
               and deleted_at is null
             order by created_at desc, id desc
-            limit $2
+            limit $3
             "#,
         )
+        .bind(org_id)
         .bind(channel_id)
         .bind(limit)
         .fetch_all(&state.pool)
@@ -187,6 +192,7 @@ async fn list_messages(
             organization_id: r.get("organization_id"),
             channel_id: r.get("channel_id"),
             sender_id: r.get("sender_id"),
+            thread_id: r.try_get("thread_id").ok(),
             body: r.get("body"),
             kind: r.get("kind"),
             attachments: attachments_by_message
@@ -305,6 +311,8 @@ async fn send_message(
     }
 
     let mut inserted_attachments: Vec<AttachmentResponse> = Vec::new();
+    let validate_cfg = crate::attachments_storage::AttachmentValidationConfig::from_env();
+    let storage = crate::attachments_storage::storage_from_env();
     for a in attachments_in.iter() {
         let filename = a.filename.trim().to_string();
         let data_url = a.data_url.trim().to_string();
@@ -314,23 +322,44 @@ async fn send_message(
         if !data_url.starts_with("data:") {
             return util::api_error(ApiErrorCode::ValidationError);
         }
-        if data_url.len() > 2_000_000 {
-            return util::api_error(ApiErrorCode::ValidationError);
-        }
         let id = Uuid::now_v7();
-        let content_type = a
+        let content_type_req = a
             .content_type
             .as_ref()
             .map(|v| v.trim().to_string())
             .filter(|v| !v.is_empty());
-        let size_bytes = data_url.len() as i64;
+
+        let (parsed_ct, bytes) = match crate::attachments_storage::parse_data_url(&data_url) {
+            Ok(v) => v,
+            Err(e) => return e,
+        };
+        let content_type = content_type_req.or(Some(parsed_ct));
+        let size_bytes = bytes.len() as i64;
+        if bytes.len() > validate_cfg.max_bytes {
+            return util::api_error(ApiErrorCode::ValidationError);
+        }
+
+        // Quota hook (no-op for now).
+        if let Err(e) = crate::util::check_attachment_quota(org_id, size_bytes) {
+            return e;
+        }
+
+        let rel_path = match storage.put(
+            org_id,
+            id,
+            &bytes,
+            crate::attachments_storage::LocalFsAttachmentStorage::guess_ext(&filename),
+        ) {
+            Ok(p) => p,
+            Err(e) => return e,
+        };
 
         let res = sqlx::query(
             r#"
             insert into message_attachments
-              (id, organization_id, message_id, uploader_id, filename, content_type, size_bytes, storage_path, created_at)
+              (id, organization_id, message_id, uploader_id, filename, content_type, size_bytes, storage_kind, storage_path, created_at)
             values
-              ($1, $2, $3, $4, $5, $6, $7, $8, $9)
+              ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)
             "#,
         )
         .bind(id)
@@ -340,7 +369,8 @@ async fn send_message(
         .bind(filename.clone())
         .bind(content_type.clone())
         .bind(size_bytes)
-        .bind(data_url.clone())
+        .bind(storage.kind())
+        .bind(rel_path.clone())
         .bind(now)
         .execute(&mut *tx)
         .await;
@@ -354,7 +384,7 @@ async fn send_message(
             filename,
             content_type,
             size_bytes,
-            data_url,
+            download_url: format!("/attachments/{id}/download"),
             created_at: now,
         });
     }
@@ -390,6 +420,7 @@ async fn send_message(
             organization_id: org_id,
             channel_id,
             sender_id: auth.user_id,
+            thread_id: None,
             body,
             kind: kind.to_string(),
             attachments: inserted_attachments,
@@ -436,7 +467,7 @@ async fn fetch_attachments_by_message(
             filename: r.get("filename"),
             content_type: r.get("content_type"),
             size_bytes: r.get("size_bytes"),
-            data_url: r.get("storage_path"),
+            download_url: format!("/attachments/{}/download", r.get::<Uuid, _>("id")),
             created_at: r.get("created_at"),
         });
     }

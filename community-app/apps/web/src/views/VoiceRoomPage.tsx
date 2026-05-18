@@ -1,26 +1,32 @@
 import { useNavigate, useParams } from "react-router-dom";
 import { useQuery } from "@tanstack/react-query";
-import { LiveKitRoom, VideoConference } from "@livekit/components-react";
 import "@livekit/components-styles";
-import { useState } from "react";
 import { apiFetch } from "../api/client";
-import type { TokenResponse, MediaRoom } from "../api/types";
+import type { MediaRoom } from "../api/types";
+import { useBrandingStore } from "../state/branding";
+import { useDeviceId } from "../media/hooks/useDeviceId";
+import { useMediaJoin } from "../media/hooks/useMediaJoin";
+import { FluxMediaShell } from "../media/components/FluxMediaShell";
+import { VoiceDock } from "../media/components/VoiceDock";
+import { MeetingRoom } from "../media/components/MeetingRoom";
+import { DeviceSetupDialog } from "../media/components/DeviceSetupDialog";
+import { createRealtimeClient } from "../realtime/ws";
+import { useEffect, useMemo, useState } from "react";
+import { useMediaRoomStore } from "../media/state/mediaRoom";
 
 function normalizeLiveKitWsUrl(url: string) {
   const trimmed = url.trim().replace(/\/+$/, "");
   if (trimmed.startsWith("ws://") || trimmed.startsWith("wss://")) return trimmed;
   if (trimmed.startsWith("https://")) return "wss://" + trimmed.slice("https://".length);
   if (trimmed.startsWith("http://")) return "ws://" + trimmed.slice("http://".length);
-  // Fallback: assume caller provided host:port.
   return "ws://" + trimmed;
 }
 
 export function VoiceRoomPage() {
   const { room_id, org_slug } = useParams();
   const nav = useNavigate();
-  const [shouldConnect, setShouldConnect] = useState(true);
-  const [lkError, setLkError] = useState<string | null>(null);
-  const [disconnectReason, setDisconnectReason] = useState<string | null>(null);
+  const uiMode = useBrandingStore((s) => s.branding?.ui_mode ?? "work");
+  const deviceId = useDeviceId();
 
   const room = useQuery({
     enabled: !!room_id,
@@ -28,84 +34,77 @@ export function VoiceRoomPage() {
     queryFn: () => apiFetch<MediaRoom>(`/media/rooms/${room_id}`),
   });
 
-  const token = useQuery({
-    enabled: !!room.data?.id,
-    queryKey: ["livekitToken", room_id],
-    queryFn: () =>
-      apiFetch<TokenResponse>(`/media/rooms/${room_id}/token`, {
-        method: "POST",
-        body: JSON.stringify({ can_publish: true, can_subscribe: true, can_publish_data: true }),
-      }),
-  });
+  const join = useMediaJoin({ room: room.data, deviceId, uiMode, enabled: !!room.data?.id });
+  const upsertParticipant = useMediaRoomStore((s) => s.upsertParticipant);
+  const markLeft = useMediaRoomStore((s) => s.markLeft);
+  const clearRoom = useMediaRoomStore((s) => s.clearRoom);
+  const [rtConnected, setRtConnected] = useState(false);
 
-  if (room.isLoading || token.isLoading) return <div className="text-slate-300">Connecting…</div>;
-  if (room.isError) return <div className="text-red-400">{(room.error as Error).message}</div>;
-  if (token.isError) return <div className="text-red-400">{(token.error as Error).message}</div>;
-  if (!room.data || !token.data) return <div className="text-slate-300">Missing data.</div>;
+  const rt = useMemo(() => {
+    return createRealtimeClient({
+      onOpen: () => setRtConnected(true),
+      onClose: () => setRtConnected(false),
+      onEvent: (evt) => {
+        const e = evt as any;
+        if (!room.data?.id) return;
+        if (e?.type === "media.participant.joined" && e.room_id === room.data.id) {
+          upsertParticipant(room.data.id, {
+            participant_id: String(e.participant_id),
+            user_id: String(e.user_id),
+            device_id: String(e.device_id ?? ""),
+            joined_at: String(e.joined_at ?? ""),
+          });
+        }
+        if (e?.type === "media.participant.left" && e.room_id === room.data.id) {
+          markLeft(room.data.id, String(e.participant_id), String(e.left_at ?? new Date().toISOString()));
+        }
+      },
+    });
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [room.data?.id, upsertParticipant, markLeft]);
 
-  const serverUrl = normalizeLiveKitWsUrl(token.data.livekit_url);
+  useEffect(() => {
+    rt.start();
+    return () => rt.stop();
+  }, [rt]);
+
+  useEffect(() => {
+    const roomId = room.data?.id;
+    if (!roomId) return;
+    rt.send({ type: "media.subscribe", room_id: roomId });
+    return () => {
+      rt.send({ type: "media.unsubscribe", room_id: roomId });
+      clearRoom(roomId);
+    };
+  }, [rt, room.data?.id, clearRoom]);
+
+  if (room.isLoading || join.isLoading) return <div className="text-slate-300">Connecting…</div>;
+  if (room.isError) return <div className="flux-text-danger">{(room.error as Error).message}</div>;
+  if (join.isError) return <div className="flux-text-danger">{(join.error as Error).message}</div>;
+  if (!room.data || !join.data) return <div className="text-slate-300">Missing data.</div>;
+
+  const serverUrl = normalizeLiveKitWsUrl(join.data.livekit_url);
   const backToChannel =
-    room.data.channel_id && org_slug ? `/app/${org_slug}/channels/${room.data.channel_id}` : org_slug ? `/app/${org_slug}` : "/orgs";
+    room.data.channel_id && org_slug
+      ? `/app/${org_slug}/channels/${room.data.channel_id}`
+      : org_slug
+        ? `/app/${org_slug}`
+        : "/orgs";
 
   return (
-    <div className="rounded-xl border border-slate-800 bg-slate-900/30 p-4">
-      <div className="flex items-center justify-between gap-3">
-        <h1 className="min-w-0 truncate text-lg font-semibold">{room.data.name}</h1>
+    <FluxMediaShell
+      serverUrl={serverUrl}
+      token={join.data.token}
+      header={<h1 className="min-w-0 truncate text-lg font-semibold">{room.data.name}</h1>}
+      footer={
         <div className="flex items-center gap-2">
-          {!shouldConnect ? (
-            <button
-              className="rounded-md border border-slate-800 bg-slate-900 px-2 py-1 text-xs text-slate-200 hover:bg-slate-800/60"
-              onClick={() => {
-                setLkError(null);
-                setDisconnectReason(null);
-                setShouldConnect(true);
-              }}
-              type="button"
-            >
-              Retry
-            </button>
-          ) : null}
-          <button
-            className="rounded-md border border-slate-800 bg-slate-900 px-2 py-1 text-xs text-slate-200 hover:bg-slate-800/60"
-            onClick={() => {
-              setShouldConnect(false);
-              nav(backToChannel);
-            }}
-            type="button"
-          >
-            Back
-          </button>
+          <div className={`text-[11px] ${rtConnected ? "flux-text-success" : "text-slate-400"}`}>{rtConnected ? "Realtime" : "Realtime…"}</div>
+          <DeviceSetupDialog />
         </div>
-      </div>
-      {lkError || disconnectReason ? (
-        <div className="mt-2 rounded-lg border border-slate-800 bg-slate-950/30 px-3 py-2 text-xs text-slate-200">
-          <div className="font-semibold">LiveKit status</div>
-          <div className="mt-1 text-slate-300">
-            {lkError ? `Error: ${lkError}` : null}
-            {lkError && disconnectReason ? " • " : null}
-            {disconnectReason ? `Disconnected: ${disconnectReason}` : null}
-          </div>
-          <div className="mt-1 text-slate-500">{`serverUrl: ${serverUrl}`}</div>
-        </div>
-      ) : null}
-      <div className="mt-3 h-[70vh] overflow-hidden rounded-lg border border-slate-800 bg-black">
-        <LiveKitRoom
-          serverUrl={serverUrl}
-          token={token.data.token}
-          connect={shouldConnect}
-          onError={(e) => {
-            setLkError(e?.message ?? String(e));
-            // eslint-disable-next-line no-console
-            console.error("LiveKit error", e);
-          }}
-          onDisconnected={() => {
-            setShouldConnect(false);
-            setDisconnectReason("disconnected");
-          }}
-        >
-          <VideoConference />
-        </LiveKitRoom>
-      </div>
-    </div>
+      }
+      onEnd={() => nav(backToChannel)}
+    >
+      {uiMode === "play" ? <VoiceDock roomId={room.data.id} /> : <MeetingRoom />}
+    </FluxMediaShell>
   );
 }

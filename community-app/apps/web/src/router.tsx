@@ -10,6 +10,7 @@ import { VoiceRoomPage } from "./views/VoiceRoomPage";
 import { AdminPage } from "./views/AdminPage";
 import { FriendsPage } from "./views/FriendsPage";
 import { ProfilePage } from "./views/ProfilePage";
+import { NotificationSettingsPage } from "./views/NotificationSettingsPage";
 
 export const router = createBrowserRouter([
   {
@@ -23,6 +24,7 @@ export const router = createBrowserRouter([
       { path: "/app/:org_slug/channels/:channel_id", element: <RequireAuth><ChannelPage /></RequireAuth> },
       { path: "/app/:org_slug/voice/:room_id", element: <RequireAuth><VoiceRoomPage /></RequireAuth> },
       { path: "/app/:org_slug/friends", element: <RequireAuth><FriendsPage /></RequireAuth> },
+      { path: "/app/:org_slug/settings/notifications", element: <RequireAuth><NotificationSettingsPage /></RequireAuth> },
       { path: "/profile", element: <RequireAuth><ProfilePage /></RequireAuth> },
       { path: "/admin/:org_slug", element: <RequireAuth><AdminPage /></RequireAuth> },
     ],

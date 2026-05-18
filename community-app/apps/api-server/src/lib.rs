@@ -4,7 +4,10 @@ use sqlx::PgPool;
 use uuid::Uuid;
 
 pub mod app;
+pub mod attachments_storage;
 pub mod routes_audit;
+pub mod routes_experience;
+pub mod routes_attachments;
 pub mod routes_auth;
 pub mod routes_branding;
 pub mod routes_channels;
@@ -12,8 +15,11 @@ pub mod routes_dms;
 pub mod routes_friends;
 pub mod routes_media;
 pub mod routes_messages;
+pub mod routes_notifications;
 pub mod routes_orgs;
+pub mod routes_threads;
 pub mod util;
+pub mod readiness;
 
 #[derive(Clone)]
 pub struct AppState {
@@ -60,11 +66,7 @@ pub async fn readyz(State(state): State<AppState>) -> impl IntoResponse {
     let mut problems: Vec<&'static str> = Vec::new();
 
     // Postgres
-    if sqlx::query_scalar::<_, i64>("select 1::bigint")
-        .fetch_one(&state.pool)
-        .await
-        .is_err()
-    {
+    if !crate::readiness::check_postgres(&state.pool).await {
         problems.push("postgres");
     }
 
@@ -78,6 +80,17 @@ pub async fn readyz(State(state): State<AppState>) -> impl IntoResponse {
     // NATS
     if state.nats.flush().await.is_err() {
         problems.push("nats");
+    }
+
+    // LiveKit RoomService (Twirp)
+    let lk = media::LiveKitConfig {
+        internal_url: state.livekit_url_internal.clone(),
+        public_url: state.livekit_url_public.clone(),
+        api_key: state.livekit_api_key.clone(),
+        api_secret: state.livekit_api_secret.clone(),
+    };
+    if !crate::readiness::check_livekit_roomservice(&lk, std::time::Duration::from_secs(2)).await {
+        problems.push("livekit");
     }
 
     if problems.is_empty() {

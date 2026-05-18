@@ -158,3 +158,11 @@ pub async fn write_audit_log(
     .execute(pool)
     .await;
 }
+
+// Attachment quota hook: keep as a stub for now, but centralize the decision point.
+pub fn check_attachment_quota(
+    _organization_id: Uuid,
+    _size_bytes: i64,
+) -> Result<(), axum::response::Response> {
+    Ok(())
+}

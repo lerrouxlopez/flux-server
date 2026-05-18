@@ -109,3 +109,36 @@ pub struct BrandingProfile {
     pub created_at: OffsetDateTime,
     pub updated_at: OffsetDateTime,
 }
+
+// ---- Media sessions (durable lifecycle) ----
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct MediaSession {
+    pub id: Uuid,
+    pub organization_id: Uuid,
+    pub media_room_id: Uuid,
+    pub created_by: Uuid,
+    pub started_at: OffsetDateTime,
+    pub ended_at: Option<OffsetDateTime>,
+    pub ended_reason: Option<String>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct MediaParticipant {
+    pub id: Uuid,
+    pub organization_id: Uuid,
+    pub media_session_id: Uuid,
+    pub user_id: Uuid,
+    pub identity: String,
+    pub can_subscribe: bool,
+    pub can_publish_audio: bool,
+    pub can_publish_video: bool,
+    pub can_publish_screen: bool,
+    pub can_publish_data: bool,
+    pub joined_at: OffsetDateTime,
+    pub last_heartbeat_at: OffsetDateTime,
+    pub left_at: Option<OffsetDateTime>,
+    pub left_reason: Option<String>,
+    pub kick_attempted_at: Option<OffsetDateTime>,
+    pub kicked_at: Option<OffsetDateTime>,
+}

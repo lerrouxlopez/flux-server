@@ -101,3 +101,20 @@ Then issue certs (Certbot-managed, same as existing sites):
 
 ### Cloudflare note (LiveKit)
 LiveKit needs UDP (`7882/udp`) for best reliability. If Cloudflare proxying blocks UDP, set `fluxserver.kineticapp.online` to ‚ÄúDNS only‚Äù (grey cloud) or configure a TURN setup that works over 443/TCP.
+
+## What makes FLUX different
+
+Most apps pick a lane: workplace collaboration or gamer comms. FLUX is designed for people who move between both.
+
+### Work Mode
+- Cleaner UI, reduced noise
+- Threads/pins/search surfaced
+- Notification defaults optimized for focus
+
+### Play Mode
+- Faster navigation and quick actions
+- Voice-first defaults for ìdrop inî comms
+- More expressive messaging (reactions, lightweight UX)
+
+Modes change the **experience and defaults**, not the underlying data integrity.
+

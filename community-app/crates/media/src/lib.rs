@@ -1,13 +1,15 @@
 use anyhow::Context;
-use domain::{MediaRoom, MediaRoomKind};
+use domain::{MediaParticipant, MediaRoom, MediaRoomKind, MediaSession};
 use livekit_api::access_token::{AccessToken, VideoGrants};
 use permissions::{perms, Perms};
 use serde::{Deserialize, Serialize};
 use sqlx::{PgPool, Row};
-use time::OffsetDateTime;
+use time::{Duration, OffsetDateTime};
 use uuid::Uuid;
 
 pub const TOKEN_TTL_SECS: u64 = 60 * 60;
+pub const PARTICIPANT_STALE_AFTER_SECS: i64 = 90;
+pub const DEFAULT_RECONNECT_WINDOW_SECS: i64 = 60;
 
 #[derive(Debug, Clone)]
 pub struct LiveKitConfig {
@@ -122,6 +124,954 @@ pub async fn get_media_room(pool: &PgPool, room_id: Uuid) -> anyhow::Result<Opti
     }))
 }
 
+// ---- Durable lifecycle: session + participant join/heartbeat/leave ----
+
+#[derive(Debug, Clone, Copy, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum JoinIntent {
+    VoiceOnly,
+    Video,
+    ScreenShare,
+    StageViewer,
+    StageSpeaker,
+}
+
+#[derive(Debug, Clone, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub struct JoinRequest {
+    pub intent: JoinIntent,
+    pub device_id: String,
+}
+
+#[derive(Debug, Clone, Serialize)]
+pub struct JoinResponse {
+    pub session_id: Uuid,
+    pub participant_id: Uuid,
+    pub token: String,
+    pub livekit_url: String,
+    pub expires_at: OffsetDateTime,
+    pub granted: GrantedCapabilities,
+}
+
+#[derive(Debug, Clone)]
+pub struct JoinMeta {
+    pub session_started: bool,
+    pub participant_reused: bool,
+    pub device_id: String,
+}
+
+#[derive(Debug, Clone, Serialize)]
+pub struct GrantedCapabilities {
+    pub can_subscribe: bool,
+    pub can_publish_audio: bool,
+    pub can_publish_video: bool,
+    pub can_publish_screen: bool,
+    pub can_publish_data: bool,
+}
+
+#[derive(Debug, Clone, Serialize)]
+pub struct SessionStatus {
+    pub session: MediaSession,
+    pub participants: Vec<MediaParticipant>,
+}
+
+pub async fn join_room(
+    pool: &PgPool,
+    livekit: &LiveKitConfig,
+    room: &MediaRoom,
+    user_id: Uuid,
+    user_perms: Perms,
+    req: JoinRequest,
+) -> anyhow::Result<JoinResponse> {
+    let can_join = permissions::has(user_perms, perms::VOICE_JOIN);
+    if !can_join {
+        anyhow::bail!("permission denied");
+    }
+
+    let device_id = normalize_device_id(&req.device_id)?;
+    let intent = normalize_intent_for_room_kind(room.kind, req.intent);
+    let requested = defaults_for_intent(intent);
+    let (resp, _meta) =
+        join_room_internal(pool, livekit, room, user_id, &device_id, user_perms, requested).await?;
+    Ok(resp)
+}
+
+pub async fn join_room_with_meta(
+    pool: &PgPool,
+    livekit: &LiveKitConfig,
+    room: &MediaRoom,
+    user_id: Uuid,
+    user_perms: Perms,
+    req: JoinRequest,
+) -> anyhow::Result<(JoinResponse, JoinMeta)> {
+    let device_id = normalize_device_id(&req.device_id)?;
+    let intent = normalize_intent_for_room_kind(room.kind, req.intent);
+    let requested = defaults_for_intent(intent);
+    join_room_internal(pool, livekit, room, user_id, &device_id, user_perms, requested).await
+}
+
+pub async fn join_room_with_requested(
+    pool: &PgPool,
+    livekit: &LiveKitConfig,
+    room: &MediaRoom,
+    user_id: Uuid,
+    user_perms: Perms,
+    requested: RequestedCapabilities,
+) -> anyhow::Result<JoinResponse> {
+    let (resp, _meta) =
+        join_room_internal(pool, livekit, room, user_id, "unknown", user_perms, requested).await?;
+    Ok(resp)
+}
+
+async fn join_room_internal(
+    pool: &PgPool,
+    livekit: &LiveKitConfig,
+    room: &MediaRoom,
+    user_id: Uuid,
+    device_id: &str,
+    user_perms: Perms,
+    requested: RequestedCapabilities,
+) -> anyhow::Result<(JoinResponse, JoinMeta)> {
+    let can_join = permissions::has(user_perms, perms::VOICE_JOIN);
+    if !can_join {
+        anyhow::bail!("permission denied");
+    }
+
+    let required = required_perms_for_requested(&requested);
+    if !permissions::has(user_perms, required) {
+        anyhow::bail!("permission denied");
+    }
+
+    // Ignore/downgrade: cap requested capabilities by permission bits.
+    let mut granted = GrantedCapabilities {
+        can_subscribe: requested.subscribe,
+        can_publish_audio: requested.publish_audio
+            && permissions::has(user_perms, perms::VOICE_SPEAK),
+        can_publish_video: requested.publish_video
+            && permissions::has(user_perms, perms::VIDEO_START),
+        can_publish_screen: requested.publish_screen
+            && permissions::has(user_perms, perms::SCREEN_SHARE),
+        can_publish_data: requested.publish_data && permissions::has(user_perms, perms::VOICE_SPEAK),
+    };
+
+    // Final cap by room kind.
+    if matches!(room.kind, MediaRoomKind::Voice) {
+        granted.can_publish_video = false;
+        granted.can_publish_screen = false;
+    }
+
+    let now = OffsetDateTime::now_utc();
+    let reconnect_window = reconnect_window_from_env();
+
+    // Reuse an active session for the room, or create a new one.
+    let (session, session_started) =
+        get_or_create_active_session(pool, room.organization_id, room.id, user_id, now).await?;
+
+    // Stable per-device identity within a session to prevent duplicate ghosts.
+    let identity = livekit_identity(user_id, device_id, session.id);
+
+    if let Some(existing) =
+        find_reusable_participant(pool, session.id, user_id, device_id, now, reconnect_window).await?
+    {
+        metrics::counter!("media_reconnect_reuse_total").increment(1);
+        tracing::info!(
+            organization_id=%room.organization_id,
+            room_id=%room.id,
+            session_id=%session.id,
+            participant_id=%existing,
+            "media.join reuse participant"
+        );
+
+        sqlx::query(
+            r#"
+            update media_participants
+            set
+              left_at = null,
+              left_reason = null,
+              last_heartbeat_at = $2,
+              identity = $3
+            where id = $1
+            "#,
+        )
+        .bind(existing)
+        .bind(now)
+        .bind(&identity)
+        .execute(pool)
+        .await?;
+
+        let token_req = TokenRequest {
+            can_publish: granted.can_publish_audio
+                || granted.can_publish_video
+                || granted.can_publish_screen,
+            can_subscribe: granted.can_subscribe,
+            can_publish_data: granted.can_publish_data,
+        };
+        let token = issue_livekit_token(
+            livekit,
+            identity,
+            room.livekit_room_name.clone(),
+            &token_req,
+        )?;
+
+        return Ok((
+            JoinResponse {
+            session_id: session.id,
+            participant_id: existing,
+            token: token.token,
+            livekit_url: token.livekit_url,
+            expires_at: now + Duration::seconds(TOKEN_TTL_SECS as i64),
+            granted,
+            },
+            JoinMeta {
+                session_started,
+                participant_reused: true,
+                device_id: device_id.to_string(),
+            },
+        ));
+    }
+
+    let participant_id = Uuid::now_v7();
+
+    sqlx::query(
+        r#"
+        insert into media_participants (
+          id, organization_id, media_session_id, user_id, identity,
+          device_id,
+          can_subscribe, can_publish_audio, can_publish_video, can_publish_screen, can_publish_data,
+          joined_at, last_heartbeat_at
+        )
+        values ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13)
+        "#,
+    )
+    .bind(participant_id)
+    .bind(room.organization_id)
+    .bind(session.id)
+    .bind(user_id)
+    .bind(&identity)
+    .bind(device_id)
+    .bind(granted.can_subscribe)
+    .bind(granted.can_publish_audio)
+    .bind(granted.can_publish_video)
+    .bind(granted.can_publish_screen)
+    .bind(granted.can_publish_data)
+    .bind(now)
+    .bind(now)
+    .execute(pool)
+    .await?;
+
+    let token_req = TokenRequest {
+        can_publish: granted.can_publish_audio
+            || granted.can_publish_video
+            || granted.can_publish_screen,
+        can_subscribe: granted.can_subscribe,
+        can_publish_data: granted.can_publish_data,
+    };
+    let token = issue_livekit_token(
+        livekit,
+        identity,
+        room.livekit_room_name.clone(),
+        &token_req,
+    )?;
+
+    Ok((
+        JoinResponse {
+        session_id: session.id,
+        participant_id,
+        token: token.token,
+        livekit_url: token.livekit_url,
+        expires_at: now + Duration::seconds(TOKEN_TTL_SECS as i64),
+        granted,
+        },
+        JoinMeta {
+            session_started,
+            participant_reused: false,
+            device_id: device_id.to_string(),
+        },
+    ))
+}
+
+fn required_perms_for_requested(req: &RequestedCapabilities) -> Perms {
+    let mut needed = perms::VOICE_JOIN;
+
+    if req.publish_audio || req.publish_data {
+        needed |= perms::VOICE_SPEAK;
+    }
+    if req.publish_video {
+        needed |= perms::VIDEO_START;
+    }
+    if req.publish_screen {
+        needed |= perms::SCREEN_SHARE;
+    }
+
+    needed
+}
+
+fn reconnect_window_from_env() -> Duration {
+    let v = std::env::var("MEDIA_RECONNECT_WINDOW_SECS")
+        .ok()
+        .and_then(|s| s.trim().parse::<i64>().ok())
+        .filter(|v| *v > 0 && *v <= 60 * 60);
+    Duration::seconds(v.unwrap_or(DEFAULT_RECONNECT_WINDOW_SECS))
+}
+
+fn livekit_identity(user_id: Uuid, device_id: &str, session_id: Uuid) -> String {
+    format!("u:{user_id}|d:{device_id}|s:{session_id}")
+}
+
+fn normalize_device_id(device_id: &str) -> anyhow::Result<String> {
+    let v = device_id.trim();
+    if v.is_empty() {
+        anyhow::bail!("device_id required");
+    }
+    if v.len() > 128 {
+        anyhow::bail!("device_id too long");
+    }
+    Ok(v.to_string())
+}
+
+async fn find_reusable_participant(
+    pool: &PgPool,
+    session_id: Uuid,
+    user_id: Uuid,
+    device_id: &str,
+    now: OffsetDateTime,
+    window: Duration,
+) -> anyhow::Result<Option<Uuid>> {
+    let cutoff = now - window;
+    let row = sqlx::query_scalar::<_, Uuid>(
+        r#"
+        select id
+        from media_participants
+        where media_session_id = $1
+          and user_id = $2
+          and device_id = $3
+          and (
+            left_at is null
+            or (left_at is not null and left_at >= $4)
+          )
+        order by joined_at desc
+        limit 1
+        "#,
+    )
+    .bind(session_id)
+    .bind(user_id)
+    .bind(device_id)
+    .bind(cutoff)
+    .fetch_optional(pool)
+    .await?;
+    Ok(row)
+}
+
+pub async fn heartbeat(
+    pool: &PgPool,
+    session_id: Uuid,
+    user_id: Uuid,
+) -> anyhow::Result<bool> {
+    let now = OffsetDateTime::now_utc();
+    if let Ok(Some((org_id, room_id))) = session_meta(pool, session_id).await {
+        tracing::info!(
+            organization_id=%org_id,
+            room_id=%room_id,
+            session_id=%session_id,
+            "media.heartbeat"
+        );
+    }
+    let res = sqlx::query(
+        r#"
+        update media_participants
+        set last_heartbeat_at = $3
+        where media_session_id = $1
+          and user_id = $2
+          and left_at is null
+        "#,
+    )
+    .bind(session_id)
+    .bind(user_id)
+    .bind(now)
+    .execute(pool)
+    .await?;
+
+    Ok(res.rows_affected() > 0)
+}
+
+pub async fn heartbeat_device(
+    pool: &PgPool,
+    session_id: Uuid,
+    user_id: Uuid,
+    device_id: &str,
+) -> anyhow::Result<bool> {
+    let device_id = normalize_device_id(device_id)?;
+    let now = OffsetDateTime::now_utc();
+    if let Ok(Some((org_id, room_id))) = session_meta(pool, session_id).await {
+        tracing::info!(
+            organization_id=%org_id,
+            room_id=%room_id,
+            session_id=%session_id,
+            device_id=%device_id,
+            "media.heartbeat"
+        );
+    }
+    let res = sqlx::query(
+        r#"
+        update media_participants
+        set last_heartbeat_at = $4
+        where media_session_id = $1
+          and user_id = $2
+          and device_id = $3
+          and left_at is null
+        "#,
+    )
+    .bind(session_id)
+    .bind(user_id)
+    .bind(device_id)
+    .bind(now)
+    .execute(pool)
+    .await?;
+
+    Ok(res.rows_affected() > 0)
+}
+
+pub async fn leave(
+    pool: &PgPool,
+    livekit: &LiveKitConfig,
+    session_id: Uuid,
+    user_id: Uuid,
+) -> anyhow::Result<bool> {
+    let now = OffsetDateTime::now_utc();
+    if let Ok(Some((org_id, room_id))) = session_meta(pool, session_id).await {
+        tracing::info!(
+            organization_id=%org_id,
+            room_id=%room_id,
+            session_id=%session_id,
+            "media.leave"
+        );
+    }
+
+    // Load room name for LiveKit kick (best-effort), and participant identity.
+    let row = sqlx::query(
+        r#"
+        select p.identity, r.livekit_room_name
+        from media_participants p
+        join media_sessions s on s.id = p.media_session_id
+        join media_rooms r on r.id = s.media_room_id
+        where p.media_session_id = $1
+          and p.user_id = $2
+          and p.left_at is null
+        order by p.joined_at desc
+        limit 1
+        "#,
+    )
+    .bind(session_id)
+    .bind(user_id)
+    .fetch_optional(pool)
+    .await?;
+
+    let Some(row) = row else {
+        return Ok(false);
+    };
+
+    let identity: String = row.get("identity");
+    let room_name: String = row.get("livekit_room_name");
+
+    let _ = remove_participant(livekit, &room_name, &identity).await;
+
+    let res = sqlx::query(
+        r#"
+        update media_participants
+        set left_at = $3, left_reason = 'leave'
+        where media_session_id = $1
+          and user_id = $2
+          and left_at is null
+        "#,
+    )
+    .bind(session_id)
+    .bind(user_id)
+    .bind(now)
+    .execute(pool)
+    .await?;
+
+    // If the session has no remaining active participants, end it.
+    let _ = end_session_if_empty(pool, session_id, now, Some("empty")).await?;
+
+    Ok(res.rows_affected() > 0)
+}
+
+pub async fn leave_device(
+    pool: &PgPool,
+    livekit: &LiveKitConfig,
+    session_id: Uuid,
+    user_id: Uuid,
+    device_id: &str,
+) -> anyhow::Result<bool> {
+    let device_id = normalize_device_id(device_id)?;
+    let now = OffsetDateTime::now_utc();
+    if let Ok(Some((org_id, room_id))) = session_meta(pool, session_id).await {
+        tracing::info!(
+            organization_id=%org_id,
+            room_id=%room_id,
+            session_id=%session_id,
+            device_id=%device_id,
+            "media.leave"
+        );
+    }
+
+    let row = sqlx::query(
+        r#"
+        select p.id, p.identity, r.livekit_room_name
+        from media_participants p
+        join media_sessions s on s.id = p.media_session_id
+        join media_rooms r on r.id = s.media_room_id
+        where p.media_session_id = $1
+          and p.user_id = $2
+          and p.device_id = $3
+          and p.left_at is null
+        order by p.joined_at desc
+        limit 1
+        "#,
+    )
+    .bind(session_id)
+    .bind(user_id)
+    .bind(&device_id)
+    .fetch_optional(pool)
+    .await?;
+
+    let Some(row) = row else {
+        return Ok(false);
+    };
+
+    let participant_id: Uuid = row.get("id");
+    let identity: String = row.get("identity");
+    let room_name: String = row.get("livekit_room_name");
+
+    let _ = remove_participant(livekit, &room_name, &identity).await;
+
+    let res = sqlx::query(
+        r#"
+        update media_participants
+        set left_at = $2, left_reason = 'leave'
+        where id = $1
+          and left_at is null
+        "#,
+    )
+    .bind(participant_id)
+    .bind(now)
+    .execute(pool)
+    .await?;
+
+    let _ = end_session_if_empty(pool, session_id, now, Some("empty")).await?;
+    Ok(res.rows_affected() > 0)
+}
+
+#[derive(Debug, Clone)]
+pub struct LeaveMeta {
+    pub participant_id: Uuid,
+    pub device_id: String,
+    pub left_reason: String,
+    pub session_ended: bool,
+    pub ended_reason: Option<String>,
+    pub ended_at: Option<OffsetDateTime>,
+}
+
+pub async fn leave_device_with_meta(
+    pool: &PgPool,
+    livekit: &LiveKitConfig,
+    session_id: Uuid,
+    user_id: Uuid,
+    device_id: &str,
+) -> anyhow::Result<Option<LeaveMeta>> {
+    let device_id_norm = normalize_device_id(device_id)?;
+    let now = OffsetDateTime::now_utc();
+
+    let row = sqlx::query(
+        r#"
+        select p.id, p.identity, r.livekit_room_name
+        from media_participants p
+        join media_sessions s on s.id = p.media_session_id
+        join media_rooms r on r.id = s.media_room_id
+        where p.media_session_id = $1
+          and p.user_id = $2
+          and p.device_id = $3
+          and p.left_at is null
+        order by p.joined_at desc
+        limit 1
+        "#,
+    )
+    .bind(session_id)
+    .bind(user_id)
+    .bind(&device_id_norm)
+    .fetch_optional(pool)
+    .await?;
+
+    let Some(row) = row else {
+        return Ok(None);
+    };
+
+    let participant_id: Uuid = row.get("id");
+    let identity: String = row.get("identity");
+    let room_name: String = row.get("livekit_room_name");
+
+    let _ = remove_participant(livekit, &room_name, &identity).await;
+
+    let res = sqlx::query(
+        r#"
+        update media_participants
+        set left_at = $2, left_reason = 'leave'
+        where id = $1
+          and left_at is null
+        "#,
+    )
+    .bind(participant_id)
+    .bind(now)
+    .execute(pool)
+    .await?;
+
+    if res.rows_affected() == 0 {
+        return Ok(None);
+    }
+
+    let (session_ended, ended_at, ended_reason) =
+        end_session_if_empty(pool, session_id, now, Some("empty")).await?;
+
+    Ok(Some(LeaveMeta {
+        participant_id,
+        device_id: device_id_norm,
+        left_reason: "leave".to_string(),
+        session_ended,
+        ended_reason,
+        ended_at,
+    }))
+}
+
+pub async fn get_session_status(
+    pool: &PgPool,
+    session_id: Uuid,
+) -> anyhow::Result<Option<SessionStatus>> {
+    let row = sqlx::query(
+        r#"
+        select id, organization_id, media_room_id, created_by, started_at, ended_at, ended_reason
+        from media_sessions
+        where id = $1
+        "#,
+    )
+    .bind(session_id)
+    .fetch_optional(pool)
+    .await?;
+
+    let Some(row) = row else {
+        return Ok(None);
+    };
+
+    let session = MediaSession {
+        id: row.get("id"),
+        organization_id: row.get("organization_id"),
+        media_room_id: row.get("media_room_id"),
+        created_by: row.get("created_by"),
+        started_at: row.get("started_at"),
+        ended_at: row.try_get("ended_at").ok(),
+        ended_reason: row.try_get::<Option<String>, _>("ended_reason").unwrap_or(None),
+    };
+
+    let rows = sqlx::query(
+        r#"
+        select
+          id, organization_id, media_session_id, user_id, identity,
+          can_subscribe, can_publish_audio, can_publish_video, can_publish_screen, can_publish_data,
+          joined_at, last_heartbeat_at, left_at, left_reason, kick_attempted_at, kicked_at
+        from media_participants
+        where media_session_id = $1
+        order by joined_at asc
+        "#,
+    )
+    .bind(session_id)
+    .fetch_all(pool)
+    .await?;
+
+    let participants = rows
+        .into_iter()
+        .map(|r| MediaParticipant {
+            id: r.get("id"),
+            organization_id: r.get("organization_id"),
+            media_session_id: r.get("media_session_id"),
+            user_id: r.get("user_id"),
+            identity: r.get("identity"),
+            can_subscribe: r.get("can_subscribe"),
+            can_publish_audio: r.get("can_publish_audio"),
+            can_publish_video: r.get("can_publish_video"),
+            can_publish_screen: r.get("can_publish_screen"),
+            can_publish_data: r.get("can_publish_data"),
+            joined_at: r.get("joined_at"),
+            last_heartbeat_at: r.get("last_heartbeat_at"),
+            left_at: r.try_get("left_at").ok(),
+            left_reason: r.try_get::<Option<String>, _>("left_reason").unwrap_or(None),
+            kick_attempted_at: r.try_get("kick_attempted_at").ok(),
+            kicked_at: r.try_get("kicked_at").ok(),
+        })
+        .collect();
+
+    Ok(Some(SessionStatus { session, participants }))
+}
+
+pub async fn cleanup_stale_participants(
+    pool: &PgPool,
+    livekit: &LiveKitConfig,
+    stale_after: Duration,
+) -> anyhow::Result<i64> {
+    let now = OffsetDateTime::now_utc();
+    let cutoff = now - stale_after;
+    tracing::info!(cutoff=%cutoff, "media.cleanup_stale start");
+
+    let stale = sqlx::query(
+        r#"
+        select p.id, p.identity, p.media_session_id, r.livekit_room_name
+        from media_participants p
+        join media_sessions s on s.id = p.media_session_id
+        join media_rooms r on r.id = s.media_room_id
+        where p.left_at is null
+          and p.last_heartbeat_at < $1
+        order by p.last_heartbeat_at asc
+        limit 250
+        "#,
+    )
+    .bind(cutoff)
+    .fetch_all(pool)
+    .await?;
+
+    let mut cleaned: i64 = 0;
+    for row in stale {
+        let participant_id: Uuid = row.get("id");
+        let identity: String = row.get("identity");
+        let session_id: Uuid = row.get("media_session_id");
+        let room_name: String = row.get("livekit_room_name");
+
+        tracing::info!(
+            session_id=%session_id,
+            participant_id=%participant_id,
+            "media.cleanup_stale participant"
+        );
+
+        let kicked = remove_participant(livekit, &room_name, &identity).await.is_ok();
+
+        let _ = sqlx::query(
+            r#"
+            update media_participants
+            set
+              left_at = $2,
+              left_reason = 'stale',
+              kick_attempted_at = $2,
+              kicked_at = case when $3 then $2 else kicked_at end
+            where id = $1
+              and left_at is null
+            "#,
+        )
+        .bind(participant_id)
+        .bind(now)
+        .bind(kicked)
+        .execute(pool)
+        .await;
+
+        let _ = end_session_if_empty(pool, session_id, now, Some("empty")).await;
+        cleaned += 1;
+    }
+
+    Ok(cleaned)
+}
+
+async fn session_meta(pool: &PgPool, session_id: Uuid) -> anyhow::Result<Option<(Uuid, Uuid)>> {
+    let row = sqlx::query_scalar::<_, (Uuid, Uuid)>(
+        r#"
+        select organization_id, media_room_id
+        from media_sessions
+        where id = $1
+        "#,
+    )
+    .bind(session_id)
+    .fetch_optional(pool)
+    .await?;
+    Ok(row)
+}
+
+#[derive(Debug, Clone, Copy)]
+pub struct RequestedCapabilities {
+    pub subscribe: bool,
+    pub publish_audio: bool,
+    pub publish_video: bool,
+    pub publish_screen: bool,
+    pub publish_data: bool,
+}
+
+fn defaults_for_intent(intent: JoinIntent) -> RequestedCapabilities {
+    match intent {
+        JoinIntent::VoiceOnly => RequestedCapabilities {
+            subscribe: true,
+            publish_audio: true,
+            publish_video: false,
+            publish_screen: false,
+            publish_data: true,
+        },
+        JoinIntent::Video => RequestedCapabilities {
+            subscribe: true,
+            publish_audio: true,
+            publish_video: true,
+            publish_screen: false,
+            publish_data: true,
+        },
+        JoinIntent::ScreenShare => RequestedCapabilities {
+            subscribe: true,
+            publish_audio: true,
+            publish_video: true,
+            publish_screen: true,
+            publish_data: true,
+        },
+        JoinIntent::StageViewer => RequestedCapabilities {
+            subscribe: true,
+            publish_audio: false,
+            publish_video: false,
+            publish_screen: false,
+            publish_data: false,
+        },
+        JoinIntent::StageSpeaker => RequestedCapabilities {
+            subscribe: true,
+            publish_audio: true,
+            publish_video: true,
+            publish_screen: false,
+            publish_data: true,
+        },
+    }
+}
+
+fn normalize_intent_for_room_kind(room_kind: MediaRoomKind, intent: JoinIntent) -> JoinIntent {
+    match room_kind {
+        MediaRoomKind::Voice => JoinIntent::VoiceOnly,
+        MediaRoomKind::Meeting => match intent {
+            JoinIntent::StageViewer | JoinIntent::StageSpeaker => JoinIntent::Video,
+            other => other,
+        },
+        MediaRoomKind::Stage => match intent {
+            JoinIntent::StageViewer | JoinIntent::StageSpeaker => intent,
+            JoinIntent::VoiceOnly => JoinIntent::StageSpeaker,
+            JoinIntent::Video | JoinIntent::ScreenShare => JoinIntent::StageSpeaker,
+        },
+    }
+}
+
+async fn get_or_create_active_session(
+    pool: &PgPool,
+    organization_id: Uuid,
+    media_room_id: Uuid,
+    created_by: Uuid,
+    now: OffsetDateTime,
+) -> anyhow::Result<(MediaSession, bool)> {
+    if let Some(row) = sqlx::query(
+        r#"
+        select id, organization_id, media_room_id, created_by, started_at, ended_at, ended_reason
+        from media_sessions
+        where media_room_id = $1
+          and ended_at is null
+        order by started_at desc
+        limit 1
+        "#,
+    )
+    .bind(media_room_id)
+    .fetch_optional(pool)
+    .await?
+    {
+        return Ok((
+            MediaSession {
+            id: row.get("id"),
+            organization_id: row.get("organization_id"),
+            media_room_id: row.get("media_room_id"),
+            created_by: row.get("created_by"),
+            started_at: row.get("started_at"),
+            ended_at: row.try_get("ended_at").ok(),
+            ended_reason: row.try_get::<Option<String>, _>("ended_reason").unwrap_or(None),
+            },
+            false,
+        ));
+    }
+
+    let id = Uuid::now_v7();
+    sqlx::query(
+        r#"
+        insert into media_sessions (id, organization_id, media_room_id, created_by, started_at)
+        values ($1,$2,$3,$4,$5)
+        "#,
+    )
+    .bind(id)
+    .bind(organization_id)
+    .bind(media_room_id)
+    .bind(created_by)
+    .bind(now)
+    .execute(pool)
+    .await?;
+
+    Ok((
+        MediaSession {
+        id,
+        organization_id,
+        media_room_id,
+        created_by,
+        started_at: now,
+        ended_at: None,
+        ended_reason: None,
+        },
+        true,
+    ))
+}
+
+async fn end_session_if_empty(
+    pool: &PgPool,
+    session_id: Uuid,
+    now: OffsetDateTime,
+    ended_reason: Option<&str>,
+) -> anyhow::Result<(bool, Option<OffsetDateTime>, Option<String>)> {
+    let active_count: i64 = sqlx::query_scalar(
+        r#"
+        select count(1)::bigint
+        from media_participants
+        where media_session_id = $1
+          and left_at is null
+        "#,
+    )
+    .bind(session_id)
+    .fetch_one(pool)
+    .await?;
+
+    if active_count > 0 {
+        return Ok((false, None, None));
+    }
+
+    let res = sqlx::query(
+        r#"
+        update media_sessions
+        set ended_at = coalesce(ended_at, $2),
+            ended_reason = coalesce(ended_reason, $3)
+        where id = $1
+          and ended_at is null
+        "#,
+    )
+    .bind(session_id)
+    .bind(now)
+    .bind(ended_reason.map(|s| s.to_string()))
+    .execute(pool)
+    .await?;
+
+    if res.rows_affected() == 0 {
+        // Already ended by another path.
+        let row = sqlx::query_as::<_, (Option<OffsetDateTime>, Option<String>)>(
+            r#"select ended_at, ended_reason from media_sessions where id = $1"#,
+        )
+        .bind(session_id)
+        .fetch_optional(pool)
+        .await?;
+        if let Some((ended_at, ended_reason)) = row {
+            return Ok((false, ended_at, ended_reason));
+        }
+        return Ok((false, None, None));
+    }
+
+    Ok((true, Some(now), ended_reason.map(|s| s.to_string())))
+}
+
 #[derive(Debug, Deserialize)]
 pub struct TokenRequest {
     pub can_publish: bool,
@@ -170,7 +1120,15 @@ pub fn issue_livekit_token(
         .with_identity(&identity)
         .with_grants(grants);
     token = token.with_ttl(std::time::Duration::from_secs(TOKEN_TTL_SECS));
-    let jwt = token.to_jwt().context("failed to create livekit jwt")?;
+    let jwt = match token.to_jwt() {
+        Ok(v) => v,
+        Err(e) => {
+            metrics::counter!("livekit_token_issuance_errors_total").increment(1);
+            return Err(anyhow::Error::new(e).context("failed to create livekit jwt"));
+        }
+    };
+
+    metrics::counter!("livekit_tokens_issued_total").increment(1);
 
     Ok(TokenResponse {
         token: jwt,
@@ -217,4 +1175,82 @@ pub async fn list_participants(
         .error_for_status()?;
 
     Ok(res.json::<serde_json::Value>().await?)
+}
+
+#[derive(Debug, Deserialize, Serialize)]
+struct RemoveParticipantRequestBody {
+    room: String,
+    identity: String,
+}
+
+pub async fn remove_participant(
+    cfg: &LiveKitConfig,
+    room_name: &str,
+    identity: &str,
+) -> anyhow::Result<()> {
+    let grants = VideoGrants {
+        room_admin: true,
+        room: room_name.to_string(),
+        ..Default::default()
+    };
+
+    let mut token = AccessToken::with_api_key(&cfg.api_key, &cfg.api_secret)
+        .with_identity("server")
+        .with_grants(grants);
+    token = token.with_ttl(std::time::Duration::from_secs(60));
+    let jwt = token.to_jwt().context("failed to create livekit jwt")?;
+
+    let url = format!(
+        "{}/twirp/livekit.RoomService/RemoveParticipant",
+        cfg.internal_url.trim_end_matches('/')
+    );
+
+    let client = reqwest::Client::new();
+    let _ = client
+        .post(url)
+        .bearer_auth(jwt)
+        .json(&RemoveParticipantRequestBody {
+            room: room_name.to_string(),
+            identity: identity.to_string(),
+        })
+        .send()
+        .await?
+        .error_for_status()?;
+
+    Ok(())
+}
+
+#[derive(Debug, Deserialize, Serialize)]
+struct ListRoomsRequestBody {
+    names: Vec<String>,
+}
+
+pub async fn roomservice_health_check(cfg: &LiveKitConfig) -> anyhow::Result<()> {
+    // Hit LiveKit RoomService (Twirp) with server auth. Any 2xx indicates health.
+    let grants = VideoGrants {
+        room_admin: true,
+        ..Default::default()
+    };
+
+    let mut token = AccessToken::with_api_key(&cfg.api_key, &cfg.api_secret)
+        .with_identity("server")
+        .with_grants(grants);
+    token = token.with_ttl(std::time::Duration::from_secs(30));
+    let jwt = token.to_jwt().context("failed to create livekit jwt")?;
+
+    let url = format!(
+        "{}/twirp/livekit.RoomService/ListRooms",
+        cfg.internal_url.trim_end_matches('/')
+    );
+
+    let client = reqwest::Client::new();
+    let _ = client
+        .post(url)
+        .bearer_auth(jwt)
+        .json(&ListRoomsRequestBody { names: Vec::new() })
+        .send()
+        .await?
+        .error_for_status()?;
+
+    Ok(())
 }

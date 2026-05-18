@@ -8,6 +8,13 @@ pub async fn publish<T: Serialize>(
     envelope: &EventEnvelope<T>,
 ) -> anyhow::Result<()> {
     let payload = serde_json::to_vec(envelope)?;
-    nats.publish(subject.into(), payload.into()).await?;
-    Ok(())
+    let subj = subject.into();
+    metrics::counter!("nats_publish_attempts_total").increment(1);
+    match nats.publish(subj, payload.into()).await {
+        Ok(_) => Ok(()),
+        Err(e) => {
+            metrics::counter!("nats_publish_failures_total").increment(1);
+            Err(e.into())
+        }
+    }
 }

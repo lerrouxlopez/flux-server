@@ -2,15 +2,93 @@
 @tailwind components;
 @tailwind utilities;
 
-:root {
-  color-scheme: dark;
-  --brand-primary: #4f46e5;
-  --brand-secondary: #111827;
-  --app-bg: #020617; /* slate-950 */
-  --app-surface: #0b1220; /* slightly lifted */
-  --app-border: #1f2937; /* slate-800 */
-  --app-text: #e2e8f0; /* slate-200 */
-  --app-muted: #94a3b8; /* slate-400 */
+@layer base {
+  :root {
+    color-scheme: dark;
+
+    /* Legacy/compat (still used by branding.ts + existing skin rules) */
+    --brand-primary: #4f46e5;
+    --brand-secondary: #111827;
+    --app-bg: #020617; /* slate-950 */
+    --app-surface: #0b1220; /* slightly lifted */
+    --app-border: #1f2937; /* slate-800 */
+    --app-text: #e2e8f0; /* slate-200 */
+    --app-muted: #94a3b8; /* slate-400 */
+
+    /* --- FLUX Design Tokens (defaults derived from legacy vars) --- */
+    /* Palette (semantic) */
+    --flux-color-accent: var(--brand-primary);
+    --flux-color-bg: var(--app-bg);
+    --flux-color-surface-1: var(--app-surface);
+    --flux-color-border: var(--app-border);
+    --flux-color-text: var(--app-text);
+    --flux-color-muted: var(--app-muted);
+    --flux-color-success: #10b981; /* emerald-500 */
+    --flux-color-warning: #f59e0b; /* amber-500 */
+    --flux-color-danger: #ef4444; /* red-500 */
+
+    /* Surfaces */
+    --flux-surface-0: var(--flux-color-bg);
+    --flux-surface-1: var(--flux-color-surface-1);
+    --flux-surface-2: color-mix(in srgb, var(--flux-color-surface-1) 85%, #ffffff 15%);
+    --flux-surface-overlay: color-mix(in srgb, var(--flux-color-surface-1) 80%, #000000 20%);
+
+    /* Typography */
+    --flux-font-sans: ui-sans-serif, system-ui, -apple-system, "Segoe UI", Roboto, "Helvetica Neue", Arial, "Noto Sans",
+      "Apple Color Emoji", "Segoe UI Emoji";
+    --flux-font-mono: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", "Courier New", monospace;
+    --flux-font-size-xs: 0.75rem;
+    --flux-font-size-sm: 0.875rem;
+    --flux-font-size-md: 1rem;
+    --flux-font-size-lg: 1.125rem;
+    --flux-font-weight-regular: 400;
+    --flux-font-weight-medium: 500;
+    --flux-font-weight-semibold: 600;
+    --flux-line-height-tight: 1.2;
+    --flux-line-height-normal: 1.5;
+
+    /* Radii */
+    --flux-radius-sm: 0.375rem;
+    --flux-radius-md: 0.5rem;
+    --flux-radius-lg: 0.75rem;
+    --flux-radius-xl: 1rem;
+
+    /* Shadows */
+    --flux-shadow-1: 0 1px 2px rgba(0, 0, 0, 0.25);
+    --flux-shadow-2: 0 6px 18px rgba(0, 0, 0, 0.28);
+    --flux-shadow-3: 0 16px 44px rgba(0, 0, 0, 0.35);
+
+    /* Motion */
+    --flux-ease-standard: cubic-bezier(0.2, 0, 0, 1);
+    --flux-ease-entrance: cubic-bezier(0, 0, 0.2, 1);
+    --flux-ease-exit: cubic-bezier(0.4, 0, 1, 1);
+    --flux-duration-fast: 120ms;
+    --flux-duration-normal: 180ms;
+    --flux-duration-slow: 260ms;
+
+    /* Mode overlays (subtle chrome differences; safe defaults = no overlay) */
+    --flux-overlay-work: transparent;
+    --flux-overlay-play: transparent;
+    --flux-overlay-active: var(--flux-overlay-work);
+
+    /* Derived interaction tokens */
+    --flux-on-accent: #ffffff;
+    --flux-accent-hover: color-mix(in srgb, var(--flux-color-accent) 86%, var(--flux-color-text) 14%);
+    --flux-accent-weak-bg: color-mix(in srgb, var(--flux-color-accent) 20%, transparent);
+    --flux-accent-border: color-mix(in srgb, var(--flux-color-accent) 55%, transparent);
+    --flux-accent-text: color-mix(in srgb, var(--flux-color-accent) 20%, var(--flux-color-text) 80%);
+    --flux-focus-border: color-mix(in srgb, var(--flux-color-accent) 70%, var(--flux-color-border) 30%);
+    --flux-focus-ring: color-mix(in srgb, var(--flux-color-accent) 28%, transparent);
+    --flux-link: color-mix(in srgb, var(--flux-color-accent) 35%, var(--flux-color-text) 65%);
+    --flux-link-hover: color-mix(in srgb, var(--flux-color-accent) 55%, var(--flux-color-text) 45%);
+  }
+
+  :root.branded[data-ui-mode="work"] {
+    --flux-overlay-active: var(--flux-overlay-work);
+  }
+  :root.branded[data-ui-mode="play"] {
+    --flux-overlay-active: var(--flux-overlay-play);
+  }
 }
 
 /* Brand skin (Work/Play modes + themes) */
@@ -95,4 +173,82 @@
 }
 :root.branded .text-slate-100 {
   color: color-mix(in srgb, var(--app-text) 90%, #ffffff 10%) !important;
+}
+
+/* Token utilities (prefer these in primary shells/screens) */
+@layer utilities {
+  .flux-btn-primary {
+    background-color: var(--flux-color-accent) !important;
+    color: var(--flux-on-accent) !important;
+    transition: background-color var(--flux-duration-fast) var(--flux-ease-standard);
+  }
+  .flux-btn-primary:hover {
+    background-color: var(--flux-accent-hover) !important;
+  }
+
+  .flux-link {
+    color: var(--flux-link) !important;
+    text-decoration: underline;
+    text-underline-offset: 2px;
+  }
+  .flux-link:hover {
+    color: var(--flux-link-hover) !important;
+  }
+
+  .flux-input {
+    border-color: var(--flux-color-border) !important;
+    background-color: color-mix(in srgb, var(--flux-surface-1) 92%, transparent) !important;
+    color: var(--flux-color-text) !important;
+  }
+  .flux-input::placeholder {
+    color: color-mix(in srgb, var(--flux-color-muted) 85%, transparent) !important;
+  }
+  .flux-input:focus {
+    border-color: var(--flux-focus-border) !important;
+    outline: none;
+  }
+
+  .flux-focus-within:focus-within {
+    border-color: color-mix(in srgb, var(--flux-focus-border) 75%, transparent) !important;
+    box-shadow: 0 0 0 1px var(--flux-focus-ring);
+  }
+
+  .flux-chip-active {
+    border-color: var(--flux-accent-border) !important;
+    background-color: var(--flux-accent-weak-bg) !important;
+    color: var(--flux-accent-text) !important;
+  }
+
+  .flux-status-success {
+    border-color: color-mix(in srgb, var(--flux-color-success) 35%, transparent) !important;
+    background-color: color-mix(in srgb, var(--flux-color-success) 14%, transparent) !important;
+    color: color-mix(in srgb, var(--flux-color-success) 25%, var(--flux-color-text) 75%) !important;
+  }
+  .flux-status-warning {
+    border-color: color-mix(in srgb, var(--flux-color-warning) 35%, transparent) !important;
+    background-color: color-mix(in srgb, var(--flux-color-warning) 14%, transparent) !important;
+    color: color-mix(in srgb, var(--flux-color-warning) 30%, var(--flux-color-text) 70%) !important;
+  }
+  .flux-status-danger {
+    border-color: color-mix(in srgb, var(--flux-color-danger) 35%, transparent) !important;
+    background-color: color-mix(in srgb, var(--flux-color-danger) 14%, transparent) !important;
+    color: color-mix(in srgb, var(--flux-color-danger) 25%, var(--flux-color-text) 75%) !important;
+  }
+
+  .flux-text-success {
+    color: color-mix(in srgb, var(--flux-color-success) 35%, var(--flux-color-text) 65%) !important;
+  }
+  .flux-text-warning {
+    color: color-mix(in srgb, var(--flux-color-warning) 40%, var(--flux-color-text) 60%) !important;
+  }
+  .flux-text-danger {
+    color: color-mix(in srgb, var(--flux-color-danger) 35%, var(--flux-color-text) 65%) !important;
+  }
+
+  .flux-dot-online {
+    background-color: var(--flux-color-success) !important;
+  }
+  .flux-dot-offline {
+    background-color: color-mix(in srgb, var(--flux-color-muted) 75%, transparent) !important;
+  }
 }
