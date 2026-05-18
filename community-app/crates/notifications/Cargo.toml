@@ -6,4 +6,6 @@ version.workspace = true
 
 [dependencies]
 domain = { path = "../domain" }
+serde.workspace = true
+uuid.workspace = true
 

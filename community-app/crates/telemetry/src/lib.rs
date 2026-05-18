@@ -1,4 +1,4 @@
-use metrics_exporter_prometheus::{PrometheusBuilder, PrometheusHandle};
+use metrics_exporter_prometheus::{Matcher, PrometheusBuilder, PrometheusHandle};
 use once_cell::sync::OnceCell;
 use tracing_subscriber::{layer::SubscriberExt, util::SubscriberInitExt, EnvFilter};
 
@@ -9,13 +9,17 @@ pub fn init() {
     let filter = EnvFilter::try_from_default_env().unwrap_or_else(|_| EnvFilter::new("info"));
     let log_format = std::env::var("LOG_FORMAT").unwrap_or_else(|_| "pretty".to_string());
 
-    let fmt_layer = if log_format.trim().eq_ignore_ascii_case("json") {
-        tracing_subscriber::fmt::layer().json()
+    if log_format.trim().eq_ignore_ascii_case("json") {
+        tracing_subscriber::registry()
+            .with(filter)
+            .with(tracing_subscriber::fmt::layer().json())
+            .init();
     } else {
-        tracing_subscriber::fmt::layer()
-    };
-
-    tracing_subscriber::registry().with(filter).with(fmt_layer).init();
+        tracing_subscriber::registry()
+            .with(filter)
+            .with(tracing_subscriber::fmt::layer())
+            .init();
+    }
 
     // Metrics (Prometheus)
     // Exposed via API apps at /metrics (they call prometheus_handle().render()).
@@ -23,7 +27,7 @@ pub fn init() {
     let _ = PROM_HANDLE.get_or_try_init(|| {
         PrometheusBuilder::new()
             .set_buckets_for_metric(
-                "http_server_request_duration_seconds",
+                Matcher::Full("http_server_request_duration_seconds".to_string()),
                 &{
                     // 5ms .. 10s
                     let mut b = Vec::new();
