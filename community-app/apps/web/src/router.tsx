@@ -8,6 +8,7 @@ import { OrgAppPage } from "./views/OrgAppPage";
 import { ChannelPage } from "./views/ChannelPage";
 import { VoiceRoomPage } from "./views/VoiceRoomPage";
 import { AdminPage } from "./views/AdminPage";
+import { AdminAccessPage } from "./views/AdminAccessPage";
 import { FriendsPage } from "./views/FriendsPage";
 import { ProfilePage } from "./views/ProfilePage";
 import { NotificationSettingsPage } from "./views/NotificationSettingsPage";
@@ -27,6 +28,7 @@ export const router = createBrowserRouter([
       { path: "/app/:org_slug/settings/notifications", element: <RequireAuth><NotificationSettingsPage /></RequireAuth> },
       { path: "/profile", element: <RequireAuth><ProfilePage /></RequireAuth> },
       { path: "/admin/:org_slug", element: <RequireAuth><AdminPage /></RequireAuth> },
+      { path: "/admin/:org_slug/access", element: <RequireAuth><AdminAccessPage /></RequireAuth> },
     ],
   },
 ]);

@@ -206,3 +206,39 @@ export type NotificationsContextResponse = {
   profile_id?: string | null;
   behavior: NotificationBehavior;
 };
+
+export type DiscoverySettingsResponse = {
+  discoverable: boolean;
+  join_policy: "open" | "invite_only" | "request" | "closed";
+  description?: string | null;
+  avatar_url?: string | null;
+  banner_url?: string | null;
+  member_count_visible: boolean;
+  online_count_visible: boolean;
+  category?: string | null;
+  tags: string[];
+};
+
+export type PatchDiscoverySettingsRequest = Partial<{
+  discoverable: boolean;
+  join_policy: "open" | "invite_only" | "request" | "closed";
+  description: string;
+  avatar_url: string;
+  banner_url: string;
+  member_count_visible: boolean;
+  online_count_visible: boolean;
+  category: string;
+  tags: string[];
+}>;
+
+export type JoinRequest = {
+  id: string;
+  user_id: string;
+  status: "pending" | "approved" | "rejected";
+  message?: string | null;
+  created_at: string;
+  responded_at?: string | null;
+  responded_by?: string | null;
+};
+
+export type JoinRequestsListResponse = { requests: JoinRequest[] };

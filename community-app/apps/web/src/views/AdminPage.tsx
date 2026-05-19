@@ -123,6 +123,12 @@ export function AdminPage() {
           </Link>
         </div>
         <div className="mt-3 border-t border-slate-800 pt-3">
+          <Link
+            to={`/admin/${org.slug}/access`}
+            className="block rounded-md px-2 py-1.5 text-left text-sm text-slate-300 hover:bg-slate-800/60"
+          >
+            Organization Access
+          </Link>
           <button
             className={`block w-full rounded-md px-2 py-1.5 text-left text-sm hover:bg-slate-800/60 ${
               tab === "branding" ? "text-white" : "text-slate-300"

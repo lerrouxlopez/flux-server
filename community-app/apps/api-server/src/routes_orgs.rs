@@ -43,7 +43,10 @@ pub fn router() -> Router<AppState> {
             "/{org_id}/join-requests/{request_id}/reject",
             post(reject_join_request),
         )
-        .route("/{org_id}/discovery-settings", axum::routing::patch(patch_discovery_settings))
+        .route(
+            "/{org_id}/discovery-settings",
+            get(get_discovery_settings).patch(patch_discovery_settings),
+        )
         .route("/{org_id}/members", get(list_members).post(add_member))
         .route(
             "/{org_id}/members/{user_id}",
@@ -190,6 +193,19 @@ struct PatchDiscoverySettingsRequest {
     online_count_visible: Option<bool>,
     category: Option<String>,
     tags: Option<Vec<String>>,
+}
+
+#[derive(Debug, Serialize)]
+struct DiscoverySettingsResponse {
+    discoverable: bool,
+    join_policy: String,
+    description: Option<String>,
+    avatar_url: Option<String>,
+    banner_url: Option<String>,
+    member_count_visible: bool,
+    online_count_visible: bool,
+    category: Option<String>,
+    tags: Vec<String>,
 }
 
 async fn create_org(
@@ -1007,6 +1023,65 @@ async fn patch_discovery_settings(
         }
         Err(_) => util::api_error(ApiErrorCode::InternalError),
     }
+}
+
+async fn get_discovery_settings(
+    State(state): State<AppState>,
+    Extension(auth): Extension<AuthContext>,
+    Path(org_id): Path<Uuid>,
+) -> impl IntoResponse {
+    Span::current().record("organization_id", tracing::field::display(org_id));
+
+    let perms_v = match util::member_perms(&state.pool, org_id, auth.user_id).await {
+        Ok(p) => p,
+        Err(e) => return e,
+    };
+    if !permissions::has(perms_v, perms::ORG_MANAGE) {
+        return util::api_error(ApiErrorCode::PermissionDenied);
+    }
+
+    let row = sqlx::query(
+        r#"
+        select
+          discoverable,
+          join_policy,
+          description,
+          avatar_url,
+          banner_url,
+          member_count_visible,
+          online_count_visible,
+          category,
+          tags
+        from organizations
+        where id = $1
+        "#,
+    )
+    .bind(org_id)
+    .fetch_optional(&state.pool)
+    .await;
+
+    let Some(row) = (match row {
+        Ok(r) => r,
+        Err(_) => return util::api_error(ApiErrorCode::InternalError),
+    }) else {
+        return util::api_error(ApiErrorCode::NotFound);
+    };
+
+    (
+        StatusCode::OK,
+        Json(DiscoverySettingsResponse {
+            discoverable: row.get("discoverable"),
+            join_policy: row.get("join_policy"),
+            description: row.try_get("description").ok(),
+            avatar_url: row.try_get("avatar_url").ok(),
+            banner_url: row.try_get("banner_url").ok(),
+            member_count_visible: row.get("member_count_visible"),
+            online_count_visible: row.get("online_count_visible"),
+            category: row.try_get("category").ok(),
+            tags: row.try_get::<Vec<String>, _>("tags").unwrap_or_default(),
+        }),
+    )
+        .into_response()
 }
 
 async fn list_orgs(
