@@ -25,7 +25,7 @@ function normalizeLiveKitWsUrl(url: string) {
 export function VoiceRoomPage() {
   const { room_id, org_slug } = useParams();
   const nav = useNavigate();
-  const uiMode = useExperience().rawMode;
+  const experience = useExperience();
   const deviceId = useDeviceId();
 
   const room = useQuery({
@@ -34,7 +34,12 @@ export function VoiceRoomPage() {
     queryFn: () => apiFetch<MediaRoom>(`/media/rooms/${room_id}`),
   });
 
-  const join = useMediaJoin({ room: room.data, deviceId, uiMode, enabled: !!room.data?.id });
+  const join = useMediaJoin({
+    room: room.data,
+    deviceId,
+    mediaDefaults: experience.mediaDefaults,
+    enabled: !!room.data?.id,
+  });
   const upsertParticipant = useMediaRoomStore((s) => s.upsertParticipant);
   const markLeft = useMediaRoomStore((s) => s.markLeft);
   const clearRoom = useMediaRoomStore((s) => s.clearRoom);
@@ -104,7 +109,7 @@ export function VoiceRoomPage() {
       }
       onEnd={() => nav(backToChannel)}
     >
-      {uiMode === "play" ? <VoiceDock roomId={room.data.id} /> : <MeetingRoom />}
+      {experience.mediaDefaults.room_kind_preference === "voice" ? <VoiceDock roomId={room.data.id} /> : <MeetingRoom />}
     </FluxMediaShell>
   );
 }
