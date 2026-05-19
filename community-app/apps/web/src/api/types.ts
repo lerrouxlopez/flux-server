@@ -9,6 +9,26 @@ export type OrgsListResponse = { organizations: Org[] };
 
 export type CreateOrgRequest = { name: string; slug: string };
 
+export type JoinPolicy = "open" | "invite_only" | "request" | "closed";
+export type DiscoverUserStatus = "member" | "not_member" | "pending_request" | "rejected" | "invited";
+
+export type DiscoverOrg = {
+  id: string;
+  slug: string;
+  name: string;
+  description?: string | null;
+  avatar_url?: string | null;
+  banner_url?: string | null;
+  join_policy: JoinPolicy;
+  category?: string | null;
+  tags: string[];
+  member_count?: number | null;
+  online_count?: number | null;
+  current_user_status: DiscoverUserStatus;
+};
+
+export type DiscoverOrgsResponse = { organizations: DiscoverOrg[]; next_cursor?: string | null };
+
 export type Channel = {
   id: string;
   organization_id: string;
