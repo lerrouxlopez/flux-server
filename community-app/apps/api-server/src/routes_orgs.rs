@@ -1,6 +1,6 @@
 use crate::{AppState, AuthContext};
 use axum::{
-    extract::{Json, Path, State},
+    extract::{Json, Path, Query, State},
     http::StatusCode,
     response::IntoResponse,
     routing::{get, post},
@@ -21,9 +21,29 @@ use tracing::Span;
 
 pub fn router() -> Router<AppState> {
     Router::new()
+        // Organization gallery / discovery endpoints (see blueprint v3):
+        // - GET /orgs          (membership-scoped)
+        // - GET /orgs/discover (discoverable orgs; no closed leakage)
+        // - POST /orgs/{org_id}/join (open orgs only)
+        // - POST/GET moderation for join requests under /orgs/{org_id}/join-requests
         .route("/", post(create_org).get(list_orgs))
+        .route("/discover", get(discover_orgs))
         .route("/join", post(join_org_by_invite))
         .route("/{org_id}", get(get_org))
+        .route("/{org_id}/join", post(join_open_org))
+        .route(
+            "/{org_id}/join-requests",
+            post(create_join_request).get(list_join_requests),
+        )
+        .route(
+            "/{org_id}/join-requests/{request_id}/approve",
+            post(approve_join_request),
+        )
+        .route(
+            "/{org_id}/join-requests/{request_id}/reject",
+            post(reject_join_request),
+        )
+        .route("/{org_id}/discovery-settings", axum::routing::patch(patch_discovery_settings))
         .route("/{org_id}/members", get(list_members).post(add_member))
         .route(
             "/{org_id}/members/{user_id}",
@@ -104,6 +124,72 @@ struct AddMemberRequest {
 struct JoinOrgRequest {
     slug: String,
     invite_code: String,
+}
+
+#[derive(Debug, Deserialize)]
+struct DiscoverQuery {
+    q: Option<String>,
+    tag: Option<String>,
+    policy: Option<String>,
+    limit: Option<i64>,
+    cursor: Option<String>,
+}
+
+#[derive(Debug, Serialize)]
+struct DiscoverOrgResponse {
+    id: Uuid,
+    slug: String,
+    name: String,
+    description: Option<String>,
+    avatar_url: Option<String>,
+    banner_url: Option<String>,
+    join_policy: String,
+    category: Option<String>,
+    tags: Vec<String>,
+    member_count: Option<i64>,
+    online_count: Option<i64>,
+    current_user_status: String, // "member" | "not_member" | "pending_request" | "rejected" | "invited"
+}
+
+#[derive(Debug, Serialize)]
+struct DiscoverOrgsResponse {
+    organizations: Vec<DiscoverOrgResponse>,
+    next_cursor: Option<String>,
+}
+
+#[derive(Debug, Deserialize)]
+struct CreateJoinRequest {
+    message: Option<String>,
+}
+
+#[derive(Debug, Serialize)]
+struct JoinRequestResponse {
+    id: Uuid,
+    user_id: Uuid,
+    status: String,
+    message: Option<String>,
+    created_at: OffsetDateTime,
+    responded_at: Option<OffsetDateTime>,
+    responded_by: Option<Uuid>,
+}
+
+#[derive(Debug, Serialize)]
+struct JoinRequestsListResponse {
+    requests: Vec<JoinRequestResponse>,
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(rename_all = "snake_case")]
+struct PatchDiscoverySettingsRequest {
+    discoverable: Option<bool>,
+    join_policy: Option<String>,
+    description: Option<String>,
+    avatar_url: Option<String>,
+    banner_url: Option<String>,
+    member_count_visible: Option<bool>,
+    online_count_visible: Option<bool>,
+    category: Option<String>,
+    tags: Option<Vec<String>>,
 }
 
 async fn create_org(
@@ -288,6 +374,639 @@ async fn create_org(
         }),
     )
         .into_response()
+}
+
+fn normalize_join_policy(v: &str) -> Option<&'static str> {
+    match v.trim().to_lowercase().as_str() {
+        "open" => Some("open"),
+        "invite_only" => Some("invite_only"),
+        "request" => Some("request"),
+        "closed" => Some("closed"),
+        _ => None,
+    }
+}
+
+fn is_safe_http_url(s: &str) -> bool {
+    let t = s.trim();
+    if t.is_empty() {
+        return false;
+    }
+    t.starts_with("http://") || t.starts_with("https://")
+}
+
+async fn discover_orgs(
+    State(state): State<AppState>,
+    Extension(auth): Extension<AuthContext>,
+    Query(q): Query<DiscoverQuery>,
+) -> impl IntoResponse {
+    let q_str = q.q.unwrap_or_default().trim().to_string();
+    let tag = q.tag.unwrap_or_default().trim().to_string();
+    let policy = q.policy.and_then(|p| normalize_join_policy(&p).map(|s| s.to_string()));
+    let limit = q.limit.unwrap_or(50).clamp(1, 100);
+
+    // cursor reserved for keyset pagination; currently not implemented (return null next_cursor).
+    let _cursor = q.cursor.unwrap_or_default();
+
+    // Privacy: only include discoverable orgs that are not closed, unless user is a member.
+    let rows = sqlx::query(
+        r#"
+        with my as (
+          select organization_id
+          from organization_members
+          where user_id = $1
+        ),
+        jr as (
+          select organization_id,
+                 status,
+                 responded_at,
+                 created_at
+          from organization_join_requests
+          where user_id = $1
+        ),
+        member_counts as (
+          select organization_id, count(*)::bigint as c
+          from organization_members
+          group by organization_id
+        )
+        select
+          o.id,
+          o.slug,
+          o.name,
+          o.description,
+          o.avatar_url,
+          o.banner_url,
+          o.join_policy,
+          o.category,
+          o.tags,
+          o.member_count_visible,
+          o.online_count_visible,
+          (my.organization_id is not null) as is_member,
+          jr.status as jr_status,
+          coalesce(member_counts.c, 0) as member_count
+        from organizations o
+        left join my on my.organization_id = o.id
+        left join jr on jr.organization_id = o.id
+        left join member_counts on member_counts.organization_id = o.id
+        where
+          (
+            my.organization_id is not null
+            or (o.discoverable = true and o.join_policy != 'closed')
+          )
+          and ($2 = '' or (o.name ilike '%' || $2 || '%' or o.slug ilike '%' || $2 || '%' or coalesce(o.description,'') ilike '%' || $2 || '%'))
+          and ($3 = '' or $3 = any(o.tags))
+          and ($4 is null or o.join_policy = $4)
+        order by (my.organization_id is not null) desc, o.created_at desc
+        limit $5
+        "#,
+    )
+    .bind(auth.user_id)
+    .bind(&q_str)
+    .bind(&tag)
+    .bind(policy.as_deref())
+    .bind(limit)
+    .fetch_all(&state.pool)
+    .await;
+
+    let rows = match rows {
+        Ok(r) => r,
+        Err(_) => return util::api_error(ApiErrorCode::InternalError),
+    };
+
+    let mut out = Vec::with_capacity(rows.len());
+    for row in rows {
+        let is_member: bool = row.get("is_member");
+        let jr_status: Option<String> = row.try_get("jr_status").ok();
+        let status = if is_member {
+            "member".to_string()
+        } else if jr_status.as_deref() == Some("pending") {
+            "pending_request".to_string()
+        } else if jr_status.as_deref() == Some("rejected") {
+            "rejected".to_string()
+        } else {
+            "not_member".to_string()
+        };
+
+        let member_count_visible: bool = row.get("member_count_visible");
+        let online_count_visible: bool = row.get("online_count_visible");
+        let member_count: i64 = row.get("member_count");
+
+        out.push(DiscoverOrgResponse {
+            id: row.get("id"),
+            slug: row.get("slug"),
+            name: row.get("name"),
+            description: row.try_get("description").ok(),
+            avatar_url: row.try_get("avatar_url").ok(),
+            banner_url: row.try_get("banner_url").ok(),
+            join_policy: row.get("join_policy"),
+            category: row.try_get("category").ok(),
+            tags: row.try_get::<Vec<String>, _>("tags").unwrap_or_default(),
+            member_count: if is_member || member_count_visible {
+                Some(member_count)
+            } else {
+                None
+            },
+            online_count: if is_member || online_count_visible {
+                Some(0)
+            } else {
+                None
+            },
+            current_user_status: status,
+        });
+    }
+
+    (
+        StatusCode::OK,
+        Json(DiscoverOrgsResponse {
+            organizations: out,
+            next_cursor: None,
+        }),
+    )
+        .into_response()
+}
+
+async fn join_open_org(
+    State(state): State<AppState>,
+    Extension(auth): Extension<AuthContext>,
+    Path(org_id): Path<Uuid>,
+) -> impl IntoResponse {
+    Span::current().record("organization_id", tracing::field::display(org_id));
+
+    let row = sqlx::query(
+        r#"
+        select join_policy
+        from organizations
+        where id = $1
+        "#,
+    )
+    .bind(org_id)
+    .fetch_optional(&state.pool)
+    .await;
+
+    let Some(row) = (match row {
+        Ok(r) => r,
+        Err(_) => return util::api_error(ApiErrorCode::InternalError),
+    }) else {
+        return util::api_error(ApiErrorCode::NotFound);
+    };
+
+    let join_policy: String = row.get("join_policy");
+    if join_policy != "open" {
+        return util::api_error(ApiErrorCode::ValidationError);
+    }
+
+    let now = OffsetDateTime::now_utc();
+    let res = sqlx::query(
+        r#"
+        insert into organization_members (organization_id, user_id, role, joined_at)
+        values ($1, $2, 'member', $3)
+        on conflict do nothing
+        "#,
+    )
+    .bind(org_id)
+    .bind(auth.user_id)
+    .bind(now)
+    .execute(&state.pool)
+    .await;
+
+    match res {
+        Ok(_) => {
+            util::write_audit_log(
+                &state.pool,
+                org_id,
+                Some(auth.user_id),
+                "org.join.open",
+                Some("user"),
+                Some(auth.user_id),
+                serde_json::json!({}),
+            )
+            .await;
+            (StatusCode::OK, Json(serde_json::json!({"status":"ok"}))).into_response()
+        }
+        Err(_) => util::api_error(ApiErrorCode::InternalError),
+    }
+}
+
+async fn create_join_request(
+    State(state): State<AppState>,
+    Extension(auth): Extension<AuthContext>,
+    Path(org_id): Path<Uuid>,
+    Json(req): Json<CreateJoinRequest>,
+) -> impl IntoResponse {
+    Span::current().record("organization_id", tracing::field::display(org_id));
+
+    // Only allow if org is request-access or invite-only (invite-only can still accept requests).
+    let row = sqlx::query(
+        r#"
+        select join_policy
+        from organizations
+        where id = $1
+        "#,
+    )
+    .bind(org_id)
+    .fetch_optional(&state.pool)
+    .await;
+
+    let Some(row) = (match row {
+        Ok(r) => r,
+        Err(_) => return util::api_error(ApiErrorCode::InternalError),
+    }) else {
+        return util::api_error(ApiErrorCode::NotFound);
+    };
+
+    let join_policy: String = row.get("join_policy");
+    if join_policy != "request" && join_policy != "invite_only" {
+        return util::api_error(ApiErrorCode::ValidationError);
+    }
+
+    // If already member, no-op.
+    let existing_member: Option<Uuid> = sqlx::query_scalar(
+        r#"select organization_id from organization_members where organization_id = $1 and user_id = $2"#,
+    )
+    .bind(org_id)
+    .bind(auth.user_id)
+    .fetch_optional(&state.pool)
+    .await
+    .ok()
+    .flatten();
+    if existing_member.is_some() {
+        return (StatusCode::OK, Json(serde_json::json!({"status":"ok","already_member":true}))).into_response();
+    }
+
+    let message = req.message.map(|m| m.trim().to_string()).filter(|m| !m.is_empty());
+    let id = Uuid::now_v7();
+    let now = OffsetDateTime::now_utc();
+
+    let inserted = sqlx::query(
+        r#"
+        insert into organization_join_requests (id, organization_id, user_id, message, status, created_at)
+        values ($1, $2, $3, $4, 'pending', $5)
+        on conflict (organization_id, user_id)
+        do update set
+          message = excluded.message,
+          status = case
+            when organization_join_requests.status = 'approved' then 'approved'
+            else 'pending'
+          end,
+          responded_at = case
+            when organization_join_requests.status = 'approved' then organization_join_requests.responded_at
+            else null
+          end,
+          responded_by = case
+            when organization_join_requests.status = 'approved' then organization_join_requests.responded_by
+            else null
+          end
+        returning id, status
+        "#,
+    )
+    .bind(id)
+    .bind(org_id)
+    .bind(auth.user_id)
+    .bind(message.clone())
+    .bind(now)
+    .fetch_one(&state.pool)
+    .await;
+
+    match inserted {
+        Ok(row) => {
+            let rid: Uuid = row.get("id");
+            let status: String = row.get("status");
+            if status == "approved" {
+                return (StatusCode::OK, Json(serde_json::json!({"status":"ok","already_member":true}))).into_response();
+            }
+            util::write_audit_log(
+                &state.pool,
+                org_id,
+                Some(auth.user_id),
+                "org.join_request.created",
+                Some("join_request"),
+                Some(rid),
+                serde_json::json!({}),
+            )
+            .await;
+            (
+                StatusCode::OK,
+                Json(serde_json::json!({"status":"ok","request_id":rid})),
+            )
+                .into_response()
+        }
+        Err(err) => {
+            if util::is_unique_violation(&err) {
+                util::api_error(ApiErrorCode::Conflict)
+            } else {
+                util::api_error(ApiErrorCode::InternalError)
+            }
+        }
+    }
+}
+
+async fn list_join_requests(
+    State(state): State<AppState>,
+    Extension(auth): Extension<AuthContext>,
+    Path(org_id): Path<Uuid>,
+) -> impl IntoResponse {
+    Span::current().record("organization_id", tracing::field::display(org_id));
+
+    let perms_v = match util::member_perms(&state.pool, org_id, auth.user_id).await {
+        Ok(p) => p,
+        Err(e) => return e,
+    };
+    if !permissions::has(perms_v, perms::ORG_MANAGE_MEMBERS) {
+        return util::api_error(ApiErrorCode::PermissionDenied);
+    }
+
+    let rows = sqlx::query(
+        r#"
+        select id, user_id, status, message, created_at, responded_at, responded_by
+        from organization_join_requests
+        where organization_id = $1
+        order by created_at desc
+        limit 200
+        "#,
+    )
+    .bind(org_id)
+    .fetch_all(&state.pool)
+    .await;
+
+    let rows = match rows {
+        Ok(r) => r,
+        Err(_) => return util::api_error(ApiErrorCode::InternalError),
+    };
+
+    let mut out = Vec::with_capacity(rows.len());
+    for r in rows {
+        out.push(JoinRequestResponse {
+            id: r.get("id"),
+            user_id: r.get("user_id"),
+            status: r.get("status"),
+            message: r.try_get("message").ok(),
+            created_at: r.get("created_at"),
+            responded_at: r.try_get("responded_at").ok(),
+            responded_by: r.try_get("responded_by").ok(),
+        });
+    }
+
+    (StatusCode::OK, Json(JoinRequestsListResponse { requests: out })).into_response()
+}
+
+async fn approve_join_request(
+    State(state): State<AppState>,
+    Extension(auth): Extension<AuthContext>,
+    Path((org_id, request_id)): Path<(Uuid, Uuid)>,
+) -> impl IntoResponse {
+    Span::current().record("organization_id", tracing::field::display(org_id));
+
+    let perms_v = match util::member_perms(&state.pool, org_id, auth.user_id).await {
+        Ok(p) => p,
+        Err(e) => return e,
+    };
+    if !permissions::has(perms_v, perms::ORG_MANAGE_MEMBERS) {
+        return util::api_error(ApiErrorCode::PermissionDenied);
+    }
+
+    let now = OffsetDateTime::now_utc();
+    let mut tx = match state.pool.begin().await {
+        Ok(tx) => tx,
+        Err(_) => return util::api_error(ApiErrorCode::InternalError),
+    };
+
+    let req_row = sqlx::query(
+        r#"
+        select user_id, status
+        from organization_join_requests
+        where id = $1 and organization_id = $2
+        "#,
+    )
+    .bind(request_id)
+    .bind(org_id)
+    .fetch_optional(&mut *tx)
+    .await;
+
+    let Some(req_row) = (match req_row {
+        Ok(r) => r,
+        Err(_) => return util::api_error(ApiErrorCode::InternalError),
+    }) else {
+        return util::api_error(ApiErrorCode::NotFound);
+    };
+
+    let user_id: Uuid = req_row.get("user_id");
+    let status: String = req_row.get("status");
+    if status != "pending" {
+        return util::api_error(ApiErrorCode::ValidationError);
+    }
+
+    let updated = sqlx::query(
+        r#"
+        update organization_join_requests
+        set status = 'approved', responded_at = $3, responded_by = $4
+        where id = $1 and organization_id = $2
+        "#,
+    )
+    .bind(request_id)
+    .bind(org_id)
+    .bind(now)
+    .bind(auth.user_id)
+    .execute(&mut *tx)
+    .await;
+    if updated.is_err() {
+        return util::api_error(ApiErrorCode::InternalError);
+    }
+
+    let member_insert = sqlx::query(
+        r#"
+        insert into organization_members (organization_id, user_id, role, joined_at)
+        values ($1, $2, 'member', $3)
+        on conflict do nothing
+        "#,
+    )
+    .bind(org_id)
+    .bind(user_id)
+    .bind(now)
+    .execute(&mut *tx)
+    .await;
+    if member_insert.is_err() {
+        return util::api_error(ApiErrorCode::InternalError);
+    }
+
+    if tx.commit().await.is_err() {
+        return util::api_error(ApiErrorCode::InternalError);
+    }
+
+    util::write_audit_log(
+        &state.pool,
+        org_id,
+        Some(auth.user_id),
+        "org.join_request.approved",
+        Some("join_request"),
+        Some(request_id),
+        serde_json::json!({ "user_id": user_id }),
+    )
+    .await;
+
+    (StatusCode::OK, Json(serde_json::json!({"status":"ok"}))).into_response()
+}
+
+async fn reject_join_request(
+    State(state): State<AppState>,
+    Extension(auth): Extension<AuthContext>,
+    Path((org_id, request_id)): Path<(Uuid, Uuid)>,
+) -> impl IntoResponse {
+    Span::current().record("organization_id", tracing::field::display(org_id));
+
+    let perms_v = match util::member_perms(&state.pool, org_id, auth.user_id).await {
+        Ok(p) => p,
+        Err(e) => return e,
+    };
+    if !permissions::has(perms_v, perms::ORG_MANAGE_MEMBERS) {
+        return util::api_error(ApiErrorCode::PermissionDenied);
+    }
+
+    let now = OffsetDateTime::now_utc();
+    let updated = sqlx::query(
+        r#"
+        update organization_join_requests
+        set status = 'rejected', responded_at = $3, responded_by = $4
+        where id = $1 and organization_id = $2 and status = 'pending'
+        "#,
+    )
+    .bind(request_id)
+    .bind(org_id)
+    .bind(now)
+    .bind(auth.user_id)
+    .execute(&state.pool)
+    .await;
+
+    match updated {
+        Ok(res) => {
+            if res.rows_affected() == 0 {
+                return util::api_error(ApiErrorCode::NotFound);
+            }
+            util::write_audit_log(
+                &state.pool,
+                org_id,
+                Some(auth.user_id),
+                "org.join_request.rejected",
+                Some("join_request"),
+                Some(request_id),
+                serde_json::json!({}),
+            )
+            .await;
+            (StatusCode::OK, Json(serde_json::json!({"status":"ok"}))).into_response()
+        }
+        Err(_) => util::api_error(ApiErrorCode::InternalError),
+    }
+}
+
+async fn patch_discovery_settings(
+    State(state): State<AppState>,
+    Extension(auth): Extension<AuthContext>,
+    Path(org_id): Path<Uuid>,
+    Json(req): Json<PatchDiscoverySettingsRequest>,
+) -> impl IntoResponse {
+    Span::current().record("organization_id", tracing::field::display(org_id));
+
+    let perms_v = match util::member_perms(&state.pool, org_id, auth.user_id).await {
+        Ok(p) => p,
+        Err(e) => return e,
+    };
+    if !permissions::has(perms_v, perms::ORG_MANAGE) {
+        return util::api_error(ApiErrorCode::PermissionDenied);
+    }
+
+    let join_policy = match req.join_policy.as_deref() {
+        None => None,
+        Some(v) => match normalize_join_policy(v) {
+            Some(p) => Some(p.to_string()),
+            None => return util::api_error(ApiErrorCode::ValidationError),
+        },
+    };
+
+    let avatar_url = req
+        .avatar_url
+        .as_ref()
+        .map(|s| s.trim().to_string())
+        .filter(|s| !s.is_empty());
+    if req.avatar_url.is_some() && avatar_url.as_deref().is_some_and(|u| !is_safe_http_url(u)) {
+        return util::api_error(ApiErrorCode::ValidationError);
+    }
+
+    let banner_url = req
+        .banner_url
+        .as_ref()
+        .map(|s| s.trim().to_string())
+        .filter(|s| !s.is_empty());
+    if req.banner_url.is_some() && banner_url.as_deref().is_some_and(|u| !is_safe_http_url(u)) {
+        return util::api_error(ApiErrorCode::ValidationError);
+    }
+
+    let description = req
+        .description
+        .as_ref()
+        .map(|s| s.trim().to_string())
+        .filter(|s| !s.is_empty());
+    let category = req
+        .category
+        .as_ref()
+        .map(|s| s.trim().to_string())
+        .filter(|s| !s.is_empty());
+
+    let tags = req.tags.as_ref().map(|v| {
+        v.iter()
+            .map(|t| t.trim().to_string())
+            .filter(|t| !t.is_empty())
+            .take(20)
+            .collect::<Vec<_>>()
+    });
+
+    let res = sqlx::query(
+        r#"
+        update organizations
+        set
+          discoverable = coalesce($2, discoverable),
+          join_policy = coalesce($3, join_policy),
+          description = case when $4 then $5 else description end,
+          avatar_url = case when $6 then $7 else avatar_url end,
+          banner_url = case when $8 then $9 else banner_url end,
+          member_count_visible = coalesce($10, member_count_visible),
+          online_count_visible = coalesce($11, online_count_visible),
+          category = case when $12 then $13 else category end,
+          tags = case when $14 then $15 else tags end
+        where id = $1
+        "#,
+    )
+    .bind(org_id)
+    .bind(req.discoverable)
+    .bind(join_policy)
+    .bind(req.description.is_some())
+    .bind(description)
+    .bind(req.avatar_url.is_some())
+    .bind(avatar_url)
+    .bind(req.banner_url.is_some())
+    .bind(banner_url)
+    .bind(req.member_count_visible)
+    .bind(req.online_count_visible)
+    .bind(req.category.is_some())
+    .bind(category)
+    .bind(req.tags.is_some())
+    .bind(tags)
+    .execute(&state.pool)
+    .await;
+
+    match res {
+        Ok(_) => {
+            util::write_audit_log(
+                &state.pool,
+                org_id,
+                Some(auth.user_id),
+                "org.discovery_settings.changed",
+                Some("organization"),
+                Some(org_id),
+                serde_json::json!({}),
+            )
+            .await;
+            (StatusCode::OK, Json(serde_json::json!({"status":"ok"}))).into_response()
+        }
+        Err(_) => util::api_error(ApiErrorCode::InternalError),
+    }
 }
 
 async fn list_orgs(
