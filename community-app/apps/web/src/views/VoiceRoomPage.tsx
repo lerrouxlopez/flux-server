@@ -3,7 +3,6 @@ import { useQuery } from "@tanstack/react-query";
 import "@livekit/components-styles";
 import { apiFetch } from "../api/client";
 import type { MediaRoom } from "../api/types";
-import { useBrandingStore } from "../state/branding";
 import { useDeviceId } from "../media/hooks/useDeviceId";
 import { useMediaJoin } from "../media/hooks/useMediaJoin";
 import { FluxMediaShell } from "../media/components/FluxMediaShell";
@@ -13,6 +12,7 @@ import { DeviceSetupDialog } from "../media/components/DeviceSetupDialog";
 import { createRealtimeClient } from "../realtime/ws";
 import { useEffect, useMemo, useState } from "react";
 import { useMediaRoomStore } from "../media/state/mediaRoom";
+import { useExperience } from "../features/experience/useExperience";
 
 function normalizeLiveKitWsUrl(url: string) {
   const trimmed = url.trim().replace(/\/+$/, "");
@@ -25,7 +25,7 @@ function normalizeLiveKitWsUrl(url: string) {
 export function VoiceRoomPage() {
   const { room_id, org_slug } = useParams();
   const nav = useNavigate();
-  const uiMode = useBrandingStore((s) => s.branding?.ui_mode ?? "work");
+  const uiMode = useExperience().rawMode;
   const deviceId = useDeviceId();
 
   const room = useQuery({

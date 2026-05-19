@@ -19,6 +19,7 @@ import type {
 import { createRealtimeClient } from "../realtime/ws";
 import { useAuthStore } from "../state/auth";
 import { useBrandingStore } from "../state/branding";
+import { useExperience } from "../features/experience/useExperience";
 
 type PresenceStatus = "online" | "offline";
 
@@ -31,7 +32,7 @@ export function useChannelEngine() {
   const me = useAuthStore((s) => s.user);
   const meId = me?.id ?? null;
   const loadOrgBranding = useBrandingStore((s) => s.loadOrgBranding);
-  const uiMode = useBrandingStore((s) => s.branding?.ui_mode ?? "work");
+  const uiMode = useExperience().rawMode;
 
   const [text, setText] = useState("");
   const [connected, setConnected] = useState(false);

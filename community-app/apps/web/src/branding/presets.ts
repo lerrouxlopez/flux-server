@@ -346,7 +346,10 @@ export const THEME_PRESETS: ThemePreset[] = [
 
 export function getThemePreset(mode: UIMode | undefined, themeId: string | undefined) {
   const m = mode ?? "work";
-  const preferred = themeId ?? (m === "play" ? "play-01" : "work-01");
+  const defaultId = m === "play" ? "play-01" : "work-06";
+  const byId = themeId ? THEME_PRESETS.find((t) => t.id === themeId) : undefined;
+  // If a themeId is provided but doesn't match the requested mode, ignore it.
+  const preferred = byId && byId.mode === m ? byId.id : defaultId;
   return (
     THEME_PRESETS.find((t) => t.id === preferred) ??
     THEME_PRESETS.find((t) => t.mode === m) ??

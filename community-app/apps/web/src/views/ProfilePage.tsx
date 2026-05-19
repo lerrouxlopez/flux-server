@@ -5,10 +5,12 @@ import { useAuthStore } from "../state/auth";
 import { Input } from "../components/Input";
 import { Button } from "../components/Button";
 import { Avatar } from "../components/Avatar";
+import { useExperience } from "../features/experience/useExperience";
 
 export function ProfilePage() {
   const user = useAuthStore((s) => s.user);
   const loadMe = useAuthStore((s) => s.loadMe);
+  const experience = useExperience();
 
   const [name, setName] = useState(user?.name ?? "");
   const [displayName, setDisplayName] = useState(user?.display_name ?? "");
@@ -112,6 +114,59 @@ export function ProfilePage() {
           {err ? <div className="text-sm text-red-400">{err}</div> : null}
           {!err && saveProfile.isSuccess ? <div className="text-sm text-emerald-400">Saved.</div> : null}
         </div>
+      </div>
+
+      <div className="mt-4 rounded-xl border border-slate-800 bg-slate-900/30 p-4">
+        <div className="text-sm font-semibold text-slate-100">Experience Mode</div>
+        <div className="mt-1 text-xs text-slate-400">
+          Mode follows your account across organizations. Current:{" "}
+          <span className="font-semibold text-slate-200">{experience.label}</span>
+        </div>
+
+        <div className="mt-3 flex flex-wrap gap-2">
+          <button
+            aria-pressed={experience.rawMode === "work"}
+            className={`rounded-md border px-3 py-2 text-sm ${
+              experience.rawMode === "work"
+                ? "flux-chip-active border-slate-800"
+                : "border-slate-800 bg-slate-950/20 text-slate-200 hover:bg-slate-800/60"
+            }`}
+            disabled={experience.isLoading}
+            onClick={() => experience.setMode("work")}
+            type="button"
+          >
+            Work Mode
+          </button>
+          <button
+            aria-pressed={experience.rawMode === "play"}
+            className={`rounded-md border px-3 py-2 text-sm ${
+              experience.rawMode === "play"
+                ? "flux-chip-active border-slate-800"
+                : "border-slate-800 bg-slate-950/20 text-slate-200 hover:bg-slate-800/60"
+            }`}
+            disabled={experience.isLoading}
+            onClick={() => experience.setMode("play")}
+            type="button"
+          >
+            Game Mode
+          </button>
+          <Button
+            className="bg-slate-800 hover:bg-slate-700"
+            disabled={experience.isLoading}
+            onClick={() => experience.clearModePreference()}
+            type="button"
+          >
+            Clear preference
+          </Button>
+        </div>
+
+        {experience.error ? <div className="mt-3 text-sm text-red-400">{experience.error}</div> : null}
+        {experience.isLoading ? <div className="mt-2 text-xs text-slate-400">Updatingâ€¦</div> : null}
+        {!experience.error ? (
+          <div className="mt-2 text-xs text-slate-500">
+            Resolution source: <span className="font-mono">{experience.source}</span>
+          </div>
+        ) : null}
       </div>
     </div>
   );

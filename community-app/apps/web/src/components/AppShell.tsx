@@ -9,6 +9,7 @@ import { useNavigate } from "react-router-dom";
 import { useQuery } from "@tanstack/react-query";
 import { apiFetch } from "../api/client";
 import type { MembersResponse, OrgsListResponse } from "../api/types";
+import { ExperienceProvider } from "../features/experience/ExperienceProvider";
 
 export function AppShell() {
   const user = useAuthStore((s) => s.user);
@@ -30,7 +31,13 @@ export function AppShell() {
     staleTime: 30_000,
   });
 
+  const fallbackOrgId = orgs.data?.organizations?.[0]?.id ?? null;
   const currentOrg = currentOrgSlug ? orgs.data?.organizations.find((o) => o.slug === currentOrgSlug) ?? null : null;
+
+  const currentChannelId = (() => {
+    const m = loc.pathname.match(/^\/app\/[^/]+\/channels\/([^/]+)/);
+    return m?.[1] ?? null;
+  })();
 
   const members = useQuery({
     enabled: !!user && !!currentOrg?.id,
@@ -48,81 +55,92 @@ export function AppShell() {
   }, [loadMe]);
 
   return (
-    <div className="flex min-h-dvh">
-      {user ? <OrgRail /> : null}
+    <ExperienceProvider orgId={currentOrg?.id ?? null} channelId={currentChannelId} fallbackOrgId={fallbackOrgId}>
+      <div className="flex min-h-dvh">
+        {user ? <OrgRail /> : null}
 
-      <div className="min-w-0 flex-1">
-        <header className="border-b border-slate-800 bg-slate-950/80 backdrop-blur">
-          <div className="flex items-center justify-between px-4 py-3">
-            <Link to="/orgs" className="font-semibold tracking-tight">
-              <BrandLogo showText={true} height={26} />
-            </Link>
+        <div className="min-w-0 flex-1">
+          <header className="border-b border-slate-800 bg-slate-950/80 backdrop-blur">
+            <div className="flex items-center justify-between px-4 py-3">
+              <Link to="/orgs" className="font-semibold tracking-tight">
+                <BrandLogo showText={true} height={26} />
+              </Link>
 
-            <div className="flex items-center gap-3">
-              {user ? (
-                <>
-                  <div className="relative">
-                    <button
-                      className="flex items-center gap-2 rounded-md px-2 py-1 hover:bg-slate-900"
-                      onClick={() => setMenuOpen((v) => !v)}
-                      type="button"
-                    >
-                      <Avatar name={user.display_name} size={28} src={user.avatar_url ?? null} />
-                      <span className="text-sm text-slate-200">{user.display_name}</span>
-                    </button>
+              <div className="flex items-center gap-3">
+                {user ? (
+                  <>
+                    <div className="relative">
+                      <button
+                        aria-expanded={menuOpen}
+                        aria-haspopup="menu"
+                        className="flex items-center gap-2 rounded-md px-2 py-1 hover:bg-slate-900"
+                        onClick={() => setMenuOpen((v) => !v)}
+                        type="button"
+                      >
+                        <Avatar name={user.display_name} size={28} src={user.avatar_url ?? null} />
+                        <span className="text-sm text-slate-200">{user.display_name}</span>
+                      </button>
 
-                    {menuOpen ? (
-                      <div className="absolute right-0 mt-2 w-48 overflow-hidden rounded-xl border border-slate-800 bg-slate-950 shadow-xl">
-                        {canSeeAdmin && currentOrgSlug ? (
+                      {menuOpen ? (
+                        <div
+                          aria-label="User menu"
+                          className="absolute right-0 mt-2 w-48 overflow-hidden rounded-xl border border-slate-800 bg-slate-950 shadow-xl"
+                          role="menu"
+                        >
+                          {canSeeAdmin && currentOrgSlug ? (
+                            <button
+                              className="block w-full px-3 py-2 text-left text-sm text-slate-200 hover:bg-slate-900"
+                              onClick={() => {
+                                setMenuOpen(false);
+                                nav(`/admin/${currentOrgSlug}`);
+                              }}
+                              role="menuitem"
+                              type="button"
+                            >
+                              Admin
+                            </button>
+                          ) : null}
                           <button
                             className="block w-full px-3 py-2 text-left text-sm text-slate-200 hover:bg-slate-900"
                             onClick={() => {
                               setMenuOpen(false);
-                              nav(`/admin/${currentOrgSlug}`);
+                              nav("/profile");
                             }}
+                            role="menuitem"
                             type="button"
                           >
-                            Admin
+                            Profile
                           </button>
-                        ) : null}
-                        <button
-                          className="block w-full px-3 py-2 text-left text-sm text-slate-200 hover:bg-slate-900"
-                          onClick={() => {
-                            setMenuOpen(false);
-                            nav("/profile");
-                          }}
-                          type="button"
-                        >
-                          Profile
-                        </button>
-                        <button
-                          className="block w-full px-3 py-2 text-left text-sm text-slate-200 hover:bg-slate-900"
-                          onClick={async () => {
-                            setMenuOpen(false);
-                            await logout();
-                            nav("/login");
-                          }}
-                          type="button"
-                        >
-                          Logout
-                        </button>
-                      </div>
-                    ) : null}
-                  </div>
-                </>
-              ) : (
-                <Link className="text-sm text-slate-300 hover:text-white" to="/login">
-                  Login
-                </Link>
-              )}
+                          <button
+                            className="block w-full px-3 py-2 text-left text-sm text-slate-200 hover:bg-slate-900"
+                            onClick={async () => {
+                              setMenuOpen(false);
+                              await logout();
+                              nav("/login");
+                            }}
+                            role="menuitem"
+                            type="button"
+                          >
+                            Logout
+                          </button>
+                        </div>
+                      ) : null}
+                    </div>
+                  </>
+                ) : (
+                  <Link className="text-sm text-slate-300 hover:text-white" to="/login">
+                    Login
+                  </Link>
+                )}
+              </div>
             </div>
-          </div>
-        </header>
+          </header>
 
-        <main className="px-4 py-4">
-          <Outlet />
-        </main>
+          <main className="px-4 py-4">
+            <Outlet />
+          </main>
+        </div>
       </div>
-    </div>
+    </ExperienceProvider>
   );
 }

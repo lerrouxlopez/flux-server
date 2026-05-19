@@ -5,6 +5,7 @@ import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { WorkShell } from "./WorkShell";
 import { GameShell } from "./GameShell";
 import type { ReactElement } from "react";
+import { ExperienceProvider } from "../features/experience/ExperienceProvider";
 
 vi.mock("../api/client", () => {
   return {
@@ -97,7 +98,11 @@ function renderWithProviders(ui: ReactElement) {
   });
   return render(
     <QueryClientProvider client={qc}>
-      <MemoryRouter>{ui}</MemoryRouter>
+      <MemoryRouter>
+        <ExperienceProvider orgId={null} channelId={null}>
+          {ui}
+        </ExperienceProvider>
+      </MemoryRouter>
     </QueryClientProvider>,
   );
 }

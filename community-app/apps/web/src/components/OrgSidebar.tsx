@@ -11,10 +11,10 @@ import type {
   Org,
 } from "../api/types";
 import { useAuthStore } from "../state/auth";
-import { useBrandingStore } from "../state/branding";
 import { Button } from "./Button";
 import { Avatar } from "./Avatar";
 import { Input } from "./Input";
+import { useExperience } from "../features/experience/useExperience";
 
 type PresenceStatus = "online" | "offline";
 
@@ -26,7 +26,7 @@ export function OrgSidebar(props: {
 }) {
   const qc = useQueryClient();
   const me = useAuthStore((s) => s.user);
-  const uiMode = useBrandingStore((s) => s.branding?.ui_mode ?? "work");
+  const uiMode = useExperience().rawMode;
 
   const [q, setQ] = useState("");
   const [showAllMembers, setShowAllMembers] = useState(false);

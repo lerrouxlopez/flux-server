@@ -1,5 +1,5 @@
 import { create } from "zustand";
-import { getThemePreset } from "../branding/presets";
+import { getThemePreset, type UIMode } from "../branding/presets";
 
 const BACKEND_ORIGIN = (import.meta as any).env?.VITE_BACKEND_ORIGIN as string | undefined;
 
@@ -68,11 +68,14 @@ export const useBrandingStore = create<BrandingState>((set) => ({
   },
 }));
 
-export function applyBrandingToDom(data: PublicBranding | null) {
+export function applyBrandingToDom(
+  data: PublicBranding | null,
+  opts?: { uiMode?: UIMode; uiTheme?: string | undefined },
+) {
   const root = document.documentElement;
   // Branded variables (used by CSS skin overrides).
   root.classList.add("branded");
-  const preset = getThemePreset(data?.ui_mode, data?.ui_theme);
+  const preset = getThemePreset(opts?.uiMode ?? data?.ui_mode, opts?.uiTheme ?? data?.ui_theme);
   root.dataset.uiMode = preset.mode;
   root.dataset.uiTheme = preset.id;
   root.dataset.colorScheme = preset.colorScheme;
