@@ -177,6 +177,15 @@
 
 /* Token utilities (prefer these in primary shells/screens) */
 @layer utilities {
+  .flux-bubble-me {
+    background-color: var(--chat-bubble-me-bg, var(--flux-color-accent)) !important;
+    color: var(--chat-bubble-me-text, var(--flux-on-accent)) !important;
+  }
+  .flux-bubble-other {
+    background-color: var(--chat-bubble-other-bg, var(--flux-surface-1)) !important;
+    color: var(--chat-bubble-other-text, var(--flux-color-text)) !important;
+  }
+
   .flux-btn-primary {
     background-color: var(--flux-color-accent) !important;
     color: var(--flux-on-accent) !important;
