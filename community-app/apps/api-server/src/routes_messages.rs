@@ -5,7 +5,7 @@ use axum::{
     http::StatusCode,
     response::IntoResponse,
     routing::{delete, get, patch, post},
-    Extension, Router,
+    Router,
 };
 use base64::Engine;
 use events::envelope::EventEnvelope;
@@ -108,7 +108,7 @@ struct ReactionRequest {
 
 async fn list_messages(
     State(state): State<AppState>,
-    Extension(auth): Extension<AuthContext>,
+    auth: AuthContext,
     Path(channel_id): Path<Uuid>,
     Query(query): Query<ListMessagesQuery>,
 ) -> impl IntoResponse {
@@ -134,16 +134,19 @@ async fn list_messages(
         Err(e) => return e,
     };
 
+    // Exclude thread replies from the main channel timeline; keep thread roots.
     let rows = if let Some((created_at, id)) = cursor {
         sqlx::query(
             r#"
-            select id, organization_id, channel_id, sender_id, thread_id, body, kind, created_at, edited_at, deleted_at
-            from messages
-            where organization_id = $1
-              and channel_id = $2
-              and deleted_at is null
-              and (created_at, id) < ($3, $4)
-            order by created_at desc, id desc
+            select m.id, m.organization_id, m.channel_id, m.sender_id, m.thread_id, m.body, m.kind, m.created_at, m.edited_at, m.deleted_at
+            from messages m
+            left join threads t on t.id = m.thread_id
+            where m.organization_id = $1
+              and m.channel_id = $2
+              and m.deleted_at is null
+              and (m.thread_id is null or t.root_message_id = m.id)
+              and (m.created_at, m.id) < ($3, $4)
+            order by m.created_at desc, m.id desc
             limit $5
             "#,
         )
@@ -157,12 +160,14 @@ async fn list_messages(
     } else {
         sqlx::query(
             r#"
-            select id, organization_id, channel_id, sender_id, thread_id, body, kind, created_at, edited_at, deleted_at
-            from messages
-            where organization_id = $1
-              and channel_id = $2
-              and deleted_at is null
-            order by created_at desc, id desc
+            select m.id, m.organization_id, m.channel_id, m.sender_id, m.thread_id, m.body, m.kind, m.created_at, m.edited_at, m.deleted_at
+            from messages m
+            left join threads t on t.id = m.thread_id
+            where m.organization_id = $1
+              and m.channel_id = $2
+              and m.deleted_at is null
+              and (m.thread_id is null or t.root_message_id = m.id)
+            order by m.created_at desc, m.id desc
             limit $3
             "#,
         )
@@ -222,7 +227,7 @@ async fn list_messages(
 
 async fn send_message(
     State(state): State<AppState>,
-    Extension(auth): Extension<AuthContext>,
+    auth: AuthContext,
     Path(channel_id): Path<Uuid>,
     Json(req): Json<SendMessageRequest>,
 ) -> impl IntoResponse {
@@ -518,7 +523,7 @@ async fn fetch_reactions_by_message(
 
 async fn edit_message(
     State(state): State<AppState>,
-    Extension(auth): Extension<AuthContext>,
+    auth: AuthContext,
     Path(message_id): Path<Uuid>,
     Json(req): Json<EditMessageRequest>,
 ) -> impl IntoResponse {
@@ -582,7 +587,7 @@ async fn edit_message(
 
 async fn delete_message(
     State(state): State<AppState>,
-    Extension(auth): Extension<AuthContext>,
+    auth: AuthContext,
     Path(message_id): Path<Uuid>,
 ) -> impl IntoResponse {
     let row = sqlx::query(
@@ -637,7 +642,7 @@ async fn delete_message(
 
 async fn add_reaction(
     State(state): State<AppState>,
-    Extension(auth): Extension<AuthContext>,
+    auth: AuthContext,
     Path(message_id): Path<Uuid>,
     Json(req): Json<ReactionRequest>,
 ) -> impl IntoResponse {
@@ -681,7 +686,7 @@ async fn add_reaction(
 
 async fn remove_reaction(
     State(state): State<AppState>,
-    Extension(auth): Extension<AuthContext>,
+    auth: AuthContext,
     Path((message_id, emoji)): Path<(Uuid, String)>,
 ) -> impl IntoResponse {
     let emoji = emoji.trim().to_string();

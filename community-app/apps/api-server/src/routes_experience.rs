@@ -5,7 +5,7 @@ use axum::{
     http::StatusCode,
     response::IntoResponse,
     routing::{get, patch},
-    Extension, Router,
+    Router,
 };
 use permissions::perms;
 use serde::{Deserialize, Serialize};
@@ -34,11 +34,12 @@ struct ExperienceContextResponse {
     notification_profile: String,  // "all" | "minimal"
     media_defaults: serde_json::Value,
     feature_flags: serde_json::Value,
+    theme_preference: Option<String>, // user's chosen theme id; null = no preference
 }
 
 async fn get_experience_context(
     State(state): State<AppState>,
-    Extension(auth): Extension<AuthContext>,
+    auth: AuthContext,
     Query(q): Query<ExperienceContextQuery>,
 ) -> impl IntoResponse {
     Span::current().record("organization_id", tracing::field::display(q.org_id));
@@ -77,6 +78,16 @@ async fn get_experience_context(
         Ok(v) => v,
         Err(e) => return e,
     };
+
+    let theme_preference: Option<String> = sqlx::query_scalar(
+        r#"select experience_theme_preference from users where id = $1"#,
+    )
+    .bind(auth.user_id)
+    .fetch_optional(&state.pool)
+    .await
+    .ok()
+    .flatten()
+    .flatten();
 
     let (density, motion, notification_profile) = if mode == "play" {
         ("compact", "reduced", "minimal")
@@ -135,6 +146,7 @@ async fn get_experience_context(
             notification_profile: notification_profile.to_string(),
             media_defaults,
             feature_flags,
+            theme_preference,
         }),
     )
         .into_response()
@@ -142,47 +154,74 @@ async fn get_experience_context(
 
 #[derive(Debug, Deserialize)]
 struct PatchExperiencePreferencesRequest {
-    mode_preference: Option<String>, // null clears
+    mode_preference: Option<serde_json::Value>,  // string | null; omit to leave unchanged
+    theme_preference: Option<serde_json::Value>, // string | null; omit to leave unchanged
 }
 
 async fn patch_experience_preferences(
     State(state): State<AppState>,
-    Extension(auth): Extension<AuthContext>,
+    auth: AuthContext,
     Json(req): Json<PatchExperiencePreferencesRequest>,
 ) -> impl IntoResponse {
-    let mode = req
-        .mode_preference
-        .as_ref()
-        .map(|v| v.trim().to_lowercase())
-        .filter(|v| !v.is_empty());
+    // Resolve mode: present key → Some(value or null); absent key → no change
+    let mode_update = match &req.mode_preference {
+        Some(serde_json::Value::String(s)) => {
+            let m = s.trim().to_lowercase();
+            if m != "work" && m != "play" {
+                return util::api_error(ApiErrorCode::ValidationError);
+            }
+            Some(Some(m))
+        }
+        Some(serde_json::Value::Null) => Some(None),
+        None => None,
+        _ => return util::api_error(ApiErrorCode::ValidationError),
+    };
 
-    if mode.as_deref().is_some_and(|m| m != "work" && m != "play") {
+    // Resolve theme: any non-empty string is accepted; null clears
+    let theme_update = match &req.theme_preference {
+        Some(serde_json::Value::String(s)) => {
+            let t = s.trim().to_string();
+            if t.is_empty() {
+                return util::api_error(ApiErrorCode::ValidationError);
+            }
+            Some(Some(t))
+        }
+        Some(serde_json::Value::Null) => Some(None),
+        None => None,
+        _ => return util::api_error(ApiErrorCode::ValidationError),
+    };
+
+    if mode_update.is_none() && theme_update.is_none() {
         return util::api_error(ApiErrorCode::ValidationError);
     }
 
-    let res = sqlx::query(
-        r#"
-        update users
-        set experience_mode_preference = $2
-        where id = $1
-        "#,
-    )
-    .bind(auth.user_id)
-    .bind(mode.clone())
-    .execute(&state.pool)
-    .await;
-
-    match res {
-        Ok(_) => (
-            StatusCode::OK,
-            Json(serde_json::json!({
-                "status": "ok",
-                "mode_preference": mode,
-            })),
+    if let Some(ref mode_val) = mode_update {
+        let res = sqlx::query(
+            r#"update users set experience_mode_preference = $2 where id = $1"#,
         )
-            .into_response(),
-        Err(_) => util::api_error(ApiErrorCode::InternalError),
+        .bind(auth.user_id)
+        .bind(mode_val.clone())
+        .execute(&state.pool)
+        .await;
+        if res.is_err() {
+            return util::api_error(ApiErrorCode::InternalError);
+        }
     }
+
+    if let Some(ref theme_val) = theme_update {
+        let res = sqlx::query(
+            r#"update users set experience_theme_preference = $2 where id = $1"#,
+        )
+        .bind(auth.user_id)
+        .bind(theme_val.clone())
+        .execute(&state.pool)
+        .await;
+        if res.is_err() {
+            return util::api_error(ApiErrorCode::InternalError);
+        }
+    }
+
+    (StatusCode::OK, Json(serde_json::json!({ "status": "ok" }))).into_response()
 }
 
 async fn resolve_mode(

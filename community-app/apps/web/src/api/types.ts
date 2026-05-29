@@ -9,11 +9,32 @@ export type OrgsListResponse = { organizations: Org[] };
 
 export type CreateOrgRequest = { name: string; slug: string };
 
+export type JoinPolicy = "open" | "invite_only" | "request" | "closed";
+export type DiscoverUserStatus = "member" | "not_member" | "pending_request" | "rejected" | "invited";
+
+export type DiscoverOrg = {
+  id: string;
+  slug: string;
+  name: string;
+  description?: string | null;
+  avatar_url?: string | null;
+  banner_url?: string | null;
+  join_policy: JoinPolicy;
+  category?: string | null;
+  tags: string[];
+  member_count?: number | null;
+  online_count?: number | null;
+  current_user_status: DiscoverUserStatus;
+};
+
+export type DiscoverOrgsResponse = { organizations: DiscoverOrg[]; next_cursor?: string | null };
+
 export type Channel = {
   id: string;
   organization_id: string;
   name: string;
   kind: string;
+  experience_mode_hint?: "work" | "play" | null;
   created_by?: string | null;
   created_at: string;
 };
@@ -186,3 +207,39 @@ export type NotificationsContextResponse = {
   profile_id?: string | null;
   behavior: NotificationBehavior;
 };
+
+export type DiscoverySettingsResponse = {
+  discoverable: boolean;
+  join_policy: "open" | "invite_only" | "request" | "closed";
+  description?: string | null;
+  avatar_url?: string | null;
+  banner_url?: string | null;
+  member_count_visible: boolean;
+  online_count_visible: boolean;
+  category?: string | null;
+  tags: string[];
+};
+
+export type PatchDiscoverySettingsRequest = Partial<{
+  discoverable: boolean;
+  join_policy: "open" | "invite_only" | "request" | "closed";
+  description: string;
+  avatar_url: string;
+  banner_url: string;
+  member_count_visible: boolean;
+  online_count_visible: boolean;
+  category: string;
+  tags: string[];
+}>;
+
+export type JoinRequest = {
+  id: string;
+  user_id: string;
+  status: "pending" | "approved" | "rejected";
+  message?: string | null;
+  created_at: string;
+  responded_at?: string | null;
+  responded_by?: string | null;
+};
+
+export type JoinRequestsListResponse = { requests: JoinRequest[] };

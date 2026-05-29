@@ -5,7 +5,7 @@ use axum::{
     http::StatusCode,
     response::IntoResponse,
     routing::{get, post},
-    Extension, Router,
+    Router,
 };
 use serde::{Deserialize, Serialize};
 use sqlx::Row;
@@ -73,7 +73,7 @@ struct CreateFriendRequestRequest {
 
 async fn list_requests(
     State(state): State<AppState>,
-    Extension(auth): Extension<AuthContext>,
+    auth: AuthContext,
     Path(org_id): Path<Uuid>,
 ) -> impl IntoResponse {
     Span::current().record("organization_id", tracing::field::display(org_id));
@@ -142,7 +142,7 @@ async fn list_requests(
 
 async fn list_friends(
     State(state): State<AppState>,
-    Extension(auth): Extension<AuthContext>,
+    auth: AuthContext,
     Path(org_id): Path<Uuid>,
 ) -> impl IntoResponse {
     Span::current().record("organization_id", tracing::field::display(org_id));
@@ -196,7 +196,7 @@ async fn list_friends(
 
 async fn create_request(
     State(state): State<AppState>,
-    Extension(auth): Extension<AuthContext>,
+    auth: AuthContext,
     Path(org_id): Path<Uuid>,
     Json(req): Json<CreateFriendRequestRequest>,
 ) -> impl IntoResponse {
@@ -306,7 +306,7 @@ async fn create_request(
 
 async fn accept_request(
     State(state): State<AppState>,
-    Extension(auth): Extension<AuthContext>,
+    auth: AuthContext,
     Path((org_id, request_id)): Path<(Uuid, Uuid)>,
 ) -> impl IntoResponse {
     Span::current().record("organization_id", tracing::field::display(org_id));
@@ -347,7 +347,7 @@ async fn accept_request(
 
 async fn decline_request(
     State(state): State<AppState>,
-    Extension(auth): Extension<AuthContext>,
+    auth: AuthContext,
     Path((org_id, request_id)): Path<(Uuid, Uuid)>,
 ) -> impl IntoResponse {
     Span::current().record("organization_id", tracing::field::display(org_id));
@@ -388,7 +388,7 @@ async fn decline_request(
 
 async fn cancel_request(
     State(state): State<AppState>,
-    Extension(auth): Extension<AuthContext>,
+    auth: AuthContext,
     Path((org_id, request_id)): Path<(Uuid, Uuid)>,
 ) -> impl IntoResponse {
     Span::current().record("organization_id", tracing::field::display(org_id));
@@ -429,7 +429,7 @@ async fn cancel_request(
 
 async fn remove_friend(
     State(state): State<AppState>,
-    Extension(auth): Extension<AuthContext>,
+    auth: AuthContext,
     Path((org_id, user_id)): Path<(Uuid, Uuid)>,
 ) -> impl IntoResponse {
     Span::current().record("organization_id", tracing::field::display(org_id));

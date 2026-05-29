@@ -5,7 +5,7 @@ use axum::{
     http::StatusCode,
     response::IntoResponse,
     routing::{get, post},
-    Extension, Router,
+    Router,
 };
 use serde::{Deserialize, Serialize};
 use sqlx::Row;
@@ -159,7 +159,7 @@ async fn public_branding(
 
 async fn get_org_branding(
     State(state): State<AppState>,
-    Extension(auth): Extension<AuthContext>,
+    auth: AuthContext,
     Path(org_id): Path<Uuid>,
 ) -> impl IntoResponse {
     Span::current().record("organization_id", tracing::field::display(org_id));
@@ -231,7 +231,7 @@ async fn get_org_branding(
 
 async fn patch_org_branding(
     State(state): State<AppState>,
-    Extension(auth): Extension<AuthContext>,
+    auth: AuthContext,
     Path(org_id): Path<Uuid>,
     Json(req): Json<serde_json::Value>,
 ) -> impl IntoResponse {
@@ -379,7 +379,7 @@ async fn patch_org_branding(
 
 async fn preview_org_branding(
     State(state): State<AppState>,
-    Extension(auth): Extension<AuthContext>,
+    auth: AuthContext,
     Path(org_id): Path<Uuid>,
     Json(req): Json<serde_json::Value>,
 ) -> impl IntoResponse {
@@ -475,8 +475,8 @@ impl BrandingPatch {
             preset_id: nullable_string_patch(obj, "preset_id")?,
             tokens,
 
-            logo_url: nullable_url_patch(obj, "logo_url")?,
-            icon_url: nullable_url_patch(obj, "icon_url")?,
+            logo_url: nullable_logo_patch(obj, "logo_url")?,
+            icon_url: nullable_logo_patch(obj, "icon_url")?,
             primary_color: nullable_color_patch(obj, "primary_color")?,
             secondary_color: nullable_color_patch(obj, "secondary_color")?,
             bg_color: nullable_color_patch(obj, "bg_color")?,
@@ -938,6 +938,27 @@ fn nullable_url_patch(
     Ok(p)
 }
 
+// Like nullable_url_patch but also accepts data URLs for logo/icon fields.
+fn nullable_logo_patch(
+    obj: &serde_json::Map<String, serde_json::Value>,
+    key: &str,
+) -> Result<FieldPatch<String>, axum::response::Response> {
+    let p = nullable_string_patch(obj, key)?;
+    if !p.present {
+        return Ok(p);
+    }
+    if let Some(ref url) = p.value {
+        if !is_safe_url(url) && !is_image_data_url(url) {
+            return Err(util::api_error(ApiErrorCode::ValidationError));
+        }
+        // Enforce a 1.6 MB cap on data URLs to stay within reasonable DB column size.
+        if url.starts_with("data:") && url.len() > 1_600_000 {
+            return Err(util::api_error(ApiErrorCode::ValidationError));
+        }
+    }
+    Ok(p)
+}
+
 fn nullable_color_patch(
     obj: &serde_json::Map<String, serde_json::Value>,
     key: &str,
@@ -961,6 +982,10 @@ fn is_safe_url(url: &str) -> bool {
     }
     // Allow http(s) only.
     u.starts_with("http://") || u.starts_with("https://")
+}
+
+fn is_image_data_url(url: &str) -> bool {
+    url.starts_with("data:image/")
 }
 
 fn is_hex_color(s: &str) -> bool {

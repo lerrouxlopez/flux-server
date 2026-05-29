@@ -37,8 +37,8 @@ export function LoginPage() {
 
   return (
     <div className="mx-auto max-w-md rounded-xl border border-slate-800 bg-slate-900/40 p-6">
-      <div className="mb-4 flex justify-center">
-        <BrandLogo height={40} />
+      <div className="mb-5 flex justify-center">
+        <BrandLogo height={150} width={200} />
       </div>
       <h1 className="text-xl font-semibold">Login</h1>
       <p className="mt-1 text-sm text-slate-300">

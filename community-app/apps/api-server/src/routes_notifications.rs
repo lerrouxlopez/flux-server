@@ -5,7 +5,7 @@ use axum::{
     http::StatusCode,
     response::IntoResponse,
     routing::{get, patch},
-    Extension, Router,
+    Router,
 };
 use permissions::perms;
 use serde::{Deserialize, Serialize};
@@ -36,7 +36,7 @@ struct NotificationsContextResponse {
 
 async fn get_notifications_context(
     State(state): State<AppState>,
-    Extension(auth): Extension<AuthContext>,
+    auth: AuthContext,
     Query(q): Query<NotificationsContextQuery>,
 ) -> impl IntoResponse {
     Span::current().record("organization_id", tracing::field::display(q.org_id));
@@ -101,7 +101,7 @@ struct PatchUserOverrideRequest {
 
 async fn patch_user_override(
     State(state): State<AppState>,
-    Extension(auth): Extension<AuthContext>,
+    auth: AuthContext,
     Json(req): Json<PatchUserOverrideRequest>,
 ) -> impl IntoResponse {
     Span::current().record("organization_id", tracing::field::display(req.org_id));
@@ -172,7 +172,7 @@ struct PatchChannelOverrideRequest {
 
 async fn patch_channel_override(
     State(state): State<AppState>,
-    Extension(auth): Extension<AuthContext>,
+    auth: AuthContext,
     Json(req): Json<PatchChannelOverrideRequest>,
 ) -> impl IntoResponse {
     Span::current().record("organization_id", tracing::field::display(req.org_id));

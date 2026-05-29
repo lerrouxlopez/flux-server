@@ -1,0 +1,123 @@
+// Vitest Snapshot v1, https://vitest.dev/guide/snapshot.html
+
+exports[`Messaging primitives > renders message viewport (snapshot) 1`] = `
+<div>
+  <div
+    class="p-2"
+    data-density="comfortable"
+  >
+    <div
+      class="space-y-2"
+    >
+      <div
+        class="group flex justify-start"
+      >
+        <div
+          class="flex max-w-[92%] items-end gap-2 flex-row"
+        >
+          <div
+            class="relative shrink-0 "
+            style="width: 28px; height: 28px;"
+          >
+            <div
+              class="grid h-full w-full place-items-center rounded-full bg-slate-700 text-xs font-semibold text-slate-100"
+            >
+              OT
+            </div>
+            <span
+              class="absolute bottom-0 right-0 h-3 w-3 rounded-full flux-dot-online"
+              style="box-shadow: 0 0 0 2px var(--app-bg, #0f172a);"
+            />
+          </div>
+          <div
+            class="min-w-0"
+          >
+            <div
+              class="mb-0.5 text-[11px] text-slate-500 text-left"
+            >
+              Other
+            </div>
+            <div
+              class="relative"
+            >
+              <div>
+                <div
+                  class="relative w-fit rounded-2xl mr-auto px-3 py-2 text-sm leading-6 flux-bubble-other"
+                >
+                  <div
+                    class="absolute -top-3 right-0 translate-x-1/2 z-20 flex items-center gap-1 rounded-full border border-slate-700 bg-slate-950/90 px-1 py-1 text-xs text-slate-200 opacity-0 shadow-sm backdrop-blur transition-opacity group-hover:opacity-100"
+                  >
+                    <button
+                      aria-label="Add reaction"
+                      class="grid h-7 w-7 place-items-center rounded-full hover:bg-slate-900"
+                      title="React"
+                      type="button"
+                    >
+                      🙂
+                    </button>
+                    <button
+                      aria-label="Pin message"
+                      class="grid h-7 w-7 place-items-center rounded-full hover:bg-slate-900"
+                      title="Pin"
+                      type="button"
+                    >
+                      📌
+                    </button>
+                    <button
+                      aria-label="Open thread"
+                      class="grid h-7 w-7 place-items-center rounded-full hover:bg-slate-900"
+                      title="Thread"
+                      type="button"
+                    >
+                      🧵
+                    </button>
+                  </div>
+                  <div
+                    class="whitespace-pre-wrap"
+                  >
+                    hello
+                  </div>
+                  <div
+                    class="mt-2"
+                  >
+                    <div
+                      aria-label="Attachments"
+                      class="space-y-2 "
+                    >
+                      <div
+                        class="rounded-xl border border-white/10 bg-black/10 p-2"
+                      >
+                        <a
+                          class="flux-link text-sm"
+                          download="file.txt"
+                          href="https://example.com/file.txt"
+                        >
+                          file.txt
+                        </a>
+                      </div>
+                    </div>
+                  </div>
+                </div>
+              </div>
+            </div>
+            <div
+              aria-label="Reactions"
+              class="mt-1 flex flex-wrap gap-1 justify-start"
+            >
+              <button
+                class="rounded-full border px-2 py-0.5 text-xs border-slate-700 bg-slate-900/40 text-slate-200 hover:bg-slate-800/60"
+                type="button"
+              >
+                👍
+                 
+                2
+              </button>
+            </div>
+          </div>
+        </div>
+      </div>
+      <div />
+    </div>
+  </div>
+</div>
+`;

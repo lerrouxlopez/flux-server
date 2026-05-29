@@ -5,7 +5,7 @@ use axum::{
     http::StatusCode,
     response::IntoResponse,
     routing::get,
-    Extension, Json, Router,
+    Json, Router,
 };
 use serde::{Deserialize, Serialize};
 use sqlx::Row;
@@ -46,7 +46,7 @@ struct AuditLogsResponse {
 
 async fn list_audit_logs(
     State(state): State<AppState>,
-    Extension(auth): Extension<AuthContext>,
+    auth: AuthContext,
     Path(org_id): Path<Uuid>,
     Query(q): Query<ListAuditQuery>,
 ) -> impl IntoResponse {

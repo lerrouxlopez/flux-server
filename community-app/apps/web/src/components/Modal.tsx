@@ -1,4 +1,4 @@
-import type { ReactNode } from "react";
+import { useEffect, useId, type ReactNode } from "react";
 
 export function Modal(props: {
   open: boolean;
@@ -6,6 +6,17 @@ export function Modal(props: {
   children: ReactNode;
   onClose: () => void;
 }) {
+  const titleId = useId();
+
+  useEffect(() => {
+    if (!props.open) return;
+    function onKeyDown(e: KeyboardEvent) {
+      if (e.key === "Escape") props.onClose();
+    }
+    document.addEventListener("keydown", onKeyDown);
+    return () => document.removeEventListener("keydown", onKeyDown);
+  }, [props.open, props.onClose]);
+
   if (!props.open) return null;
 
   return (
@@ -16,15 +27,24 @@ export function Modal(props: {
         onClick={props.onClose}
         type="button"
       />
-      <div className="relative mx-auto mt-20 w-[92vw] max-w-lg rounded-xl border border-slate-800 bg-slate-950 p-4 shadow-2xl">
+      <div
+        aria-labelledby={props.title ? titleId : undefined}
+        aria-modal="true"
+        aria-label={props.title ? undefined : "Modal dialog"}
+        role="dialog"
+        className="relative mx-auto mt-20 w-[92vw] max-w-lg rounded-xl border border-slate-800 bg-slate-950 p-4 shadow-2xl"
+      >
         <div className="flex items-center justify-between gap-4">
-          <div className="text-sm font-semibold text-slate-100">{props.title ?? ""}</div>
+          <div id={titleId} className="text-sm font-semibold text-slate-100">
+            {props.title ?? ""}
+          </div>
           <button
+            aria-label="Close"
             className="rounded-md px-2 py-1 text-sm text-slate-400 hover:bg-slate-800/60 hover:text-slate-200"
             onClick={props.onClose}
             type="button"
           >
-            ✕
+            ×
           </button>
         </div>
         <div className="mt-3">{props.children}</div>

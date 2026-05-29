@@ -1,0 +1,28 @@
+// Vitest Snapshot v1, https://vitest.dev/guide/snapshot.html
+
+exports[`ExperienceProvider > maps backend mode=play to Game Mode label 1`] = `
+<div>
+  <div>
+    <div
+      data-testid="label"
+    >
+      Game Mode
+    </div>
+    <div
+      data-testid="density"
+    >
+      compact
+    </div>
+    <div
+      data-testid="scheme"
+    >
+      dark
+    </div>
+    <button
+      type="button"
+    >
+      set-play
+    </button>
+  </div>
+</div>
+`;

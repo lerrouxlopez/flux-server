@@ -19,6 +19,9 @@ import type {
 import { createRealtimeClient } from "../realtime/ws";
 import { useAuthStore } from "../state/auth";
 import { useBrandingStore } from "../state/branding";
+import { useExperience } from "../features/experience/useExperience";
+import { useToastStore } from "../state/toasts";
+import { playFriendlyBlip } from "../util/notifications";
 
 type PresenceStatus = "online" | "offline";
 
@@ -31,7 +34,9 @@ export function useChannelEngine() {
   const me = useAuthStore((s) => s.user);
   const meId = me?.id ?? null;
   const loadOrgBranding = useBrandingStore((s) => s.loadOrgBranding);
-  const uiMode = useBrandingStore((s) => s.branding?.ui_mode ?? "work");
+  const uiMode = useExperience().rawMode;
+  const prevModeRef = useRef(uiMode);
+  const pushToast = useToastStore((s) => s.push);
 
   const [text, setText] = useState("");
   const [connected, setConnected] = useState(false);
@@ -53,6 +58,10 @@ export function useChannelEngine() {
   const [activeThreadId, setActiveThreadId] = useState<string | null>(null);
   const [threadDraft, setThreadDraft] = useState("");
   const [newThreadDraft, setNewThreadDraft] = useState("");
+  const uiStateRef = useRef<{ workPane: string | null; activeThreadId: string | null }>({ workPane: null, activeThreadId: null });
+  useEffect(() => {
+    uiStateRef.current = { workPane, activeThreadId };
+  }, [workPane, activeThreadId]);
 
   const QUICK_REACTIONS = useMemo(
     () => ["\u{1F44D}", "\u{2764}\u{FE0F}", "\u{1F602}", "\u{1F62E}", "\u{1F622}", "\u{1F621}"],
@@ -183,6 +192,13 @@ export function useChannelEngine() {
                   : existing;
               return { ...(prev ?? {}), messages: [msg, ...filtered] };
             });
+            if (!me?.id || msg.sender_id !== me.id) {
+              pushToast({
+                title: "New message",
+                message: msg.body ?? "(attachment)",
+              });
+              playFriendlyBlip();
+            }
           } else {
             qc.invalidateQueries({ queryKey: ["messages", channel_id] });
           }
@@ -214,6 +230,14 @@ export function useChannelEngine() {
         if (e?.type === "thread.reply.created" && e.channel_id === channel_id) {
           qc.invalidateQueries({ queryKey: ["threads", channel_id] });
           qc.invalidateQueries({ queryKey: ["thread", String(e.thread_id ?? "")] });
+          const current = uiStateRef.current;
+          if (!(current.workPane === "threads" && current.activeThreadId && current.activeThreadId === String(e.thread_id ?? ""))) {
+            pushToast({
+              title: "New thread reply",
+              message: "A thread has a new reply.",
+            });
+            playFriendlyBlip();
+          }
           return;
         }
         if (e?.type === "channel.pins.changed" && e.channel_id === channel_id) {
@@ -347,20 +371,58 @@ export function useChannelEngine() {
   });
 
   const createMeeting = useMutation({
-    mutationFn: async () => {
+    mutationFn: async (opts?: { mediaKind?: "voice" | "meeting"; replaceHistory?: boolean; fallbackChannelId?: string }) => {
       return apiFetch<MediaRoom>(`/orgs/${org!.id}/media/rooms`, {
         method: "POST",
         body: JSON.stringify({
-          kind: "meeting",
+          kind: opts?.mediaKind ?? "meeting",
           channel_id: channel_id,
           name: `Meeting - ${channel?.name ?? "channel"}`,
         }),
       });
     },
-    onSuccess: (room) => {
-      nav(`/app/${org!.slug}/voice/${room.id}`);
+    onSuccess: (room, opts) => {
+      const state = opts?.fallbackChannelId ? { backTo: opts.fallbackChannelId } : undefined;
+      nav(`/app/${org!.slug}/voice/${room.id}`, { replace: opts?.replaceHistory, state });
     },
   });
+
+  const autoJoinedVoiceForChannel = useRef<string | null>(null);
+  useEffect(() => {
+    if (!channel_id) return;
+    if (channel?.kind !== "voice" && channel?.kind !== "video") return;
+    if (createMeeting.isPending) return;
+    if (autoJoinedVoiceForChannel.current === channel_id) return;
+    autoJoinedVoiceForChannel.current = channel_id;
+    const mediaKind = channel.kind === "video" ? "meeting" : "voice";
+    const modeChannels = (channels.data?.channels ?? []).filter(
+      (c) => !c.experience_mode_hint || c.experience_mode_hint === uiMode,
+    );
+    const fallback =
+      modeChannels.find((c) => c.name.toLowerCase() === "general" && c.kind === "text") ??
+      modeChannels.find((c) => c.kind === "text") ??
+      null;
+    createMeeting.mutate({ mediaKind, replaceHistory: true, fallbackChannelId: fallback?.id });
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [channel_id, channel?.kind]);
+
+  // When the user switches modes, navigate to the General channel of the new mode.
+  useEffect(() => {
+    const prev = prevModeRef.current;
+    prevModeRef.current = uiMode;
+    if (prev === uiMode) return;
+    if (!org?.slug || !channels.data) return;
+    const modeChannels = channels.data.channels.filter(
+      (c) => !c.experience_mode_hint || c.experience_mode_hint === uiMode,
+    );
+    const target =
+      modeChannels.find((c) => c.name.toLowerCase() === "general" && c.kind === "text") ??
+      modeChannels.find((c) => c.kind === "text") ??
+      modeChannels[0] ??
+      null;
+    if (target) nav(`/app/${org.slug}/channels/${target.id}`);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [uiMode]);
 
   function onTypingChange(v: string) {
     setText(v);
@@ -427,6 +489,22 @@ export function useChannelEngine() {
     queryFn: () => apiFetch<ThreadsListResponse>(`/channels/${channel_id}/threads`),
     staleTime: 2_000,
   });
+
+  // Thread counts for main timeline rendering (reply counter under root messages).
+  const threadIndex = useQuery({
+    enabled: !!channel_id && uiMode === "work",
+    queryKey: ["thread-index", channel_id],
+    queryFn: () => apiFetch<ThreadsListResponse>(`/channels/${channel_id}/threads`),
+    staleTime: 5_000,
+  });
+
+  const threadMetaByRootId = useMemo(() => {
+    const map = new Map<string, { threadId: string; replyCount: number }>();
+    for (const t of threadIndex.data?.threads ?? []) {
+      map.set(String(t.thread.root_message_id), { threadId: String(t.thread.id), replyCount: Number(t.reply_count ?? 0) });
+    }
+    return map;
+  }, [threadIndex.data]);
 
   const thread = useQuery({
     enabled: !!activeThreadId,
@@ -510,7 +588,11 @@ export function useChannelEngine() {
     },
   });
 
-  const channelTitle = channel?.kind === "dm" ? `Direct message` : `# ${channel?.name ?? ""}`;
+  const channelTitle =
+    channel?.kind === "dm" ? "Direct message"
+    : channel?.kind === "voice" ? `🔊 ${channel.name}`
+    : channel?.kind === "video" ? `🎥 ${channel.name}`
+    : `# ${channel?.name ?? ""}`;
 
   return {
     // context
@@ -583,6 +665,8 @@ export function useChannelEngine() {
     pins,
     pinnedIds,
     threads,
+    threadIndex,
+    threadMetaByRootId,
     thread,
     createThread,
     replyToThread,

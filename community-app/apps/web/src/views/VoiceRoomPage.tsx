@@ -1,9 +1,8 @@
-import { useNavigate, useParams } from "react-router-dom";
+import { useLocation, useNavigate, useParams } from "react-router-dom";
 import { useQuery } from "@tanstack/react-query";
 import "@livekit/components-styles";
 import { apiFetch } from "../api/client";
 import type { MediaRoom } from "../api/types";
-import { useBrandingStore } from "../state/branding";
 import { useDeviceId } from "../media/hooks/useDeviceId";
 import { useMediaJoin } from "../media/hooks/useMediaJoin";
 import { FluxMediaShell } from "../media/components/FluxMediaShell";
@@ -13,6 +12,7 @@ import { DeviceSetupDialog } from "../media/components/DeviceSetupDialog";
 import { createRealtimeClient } from "../realtime/ws";
 import { useEffect, useMemo, useState } from "react";
 import { useMediaRoomStore } from "../media/state/mediaRoom";
+import { useExperience } from "../features/experience/useExperience";
 
 function normalizeLiveKitWsUrl(url: string) {
   const trimmed = url.trim().replace(/\/+$/, "");
@@ -25,7 +25,9 @@ function normalizeLiveKitWsUrl(url: string) {
 export function VoiceRoomPage() {
   const { room_id, org_slug } = useParams();
   const nav = useNavigate();
-  const uiMode = useBrandingStore((s) => s.branding?.ui_mode ?? "work");
+  const location = useLocation();
+  const fallbackChannelId = (location.state as { backTo?: string } | null)?.backTo;
+  const experience = useExperience();
   const deviceId = useDeviceId();
 
   const room = useQuery({
@@ -34,7 +36,12 @@ export function VoiceRoomPage() {
     queryFn: () => apiFetch<MediaRoom>(`/media/rooms/${room_id}`),
   });
 
-  const join = useMediaJoin({ room: room.data, deviceId, uiMode, enabled: !!room.data?.id });
+  const join = useMediaJoin({
+    room: room.data,
+    deviceId,
+    mediaDefaults: experience.mediaDefaults,
+    enabled: !!room.data?.id,
+  });
   const upsertParticipant = useMediaRoomStore((s) => s.upsertParticipant);
   const markLeft = useMediaRoomStore((s) => s.markLeft);
   const clearRoom = useMediaRoomStore((s) => s.clearRoom);
@@ -85,11 +92,13 @@ export function VoiceRoomPage() {
 
   const serverUrl = normalizeLiveKitWsUrl(join.data.livekit_url);
   const backToChannel =
-    room.data.channel_id && org_slug
-      ? `/app/${org_slug}/channels/${room.data.channel_id}`
-      : org_slug
-        ? `/app/${org_slug}`
-        : "/orgs";
+    fallbackChannelId && org_slug
+      ? `/app/${org_slug}/channels/${fallbackChannelId}`
+      : room.data.channel_id && org_slug
+        ? `/app/${org_slug}/channels/${room.data.channel_id}`
+        : org_slug
+          ? `/app/${org_slug}`
+          : "/orgs";
 
   return (
     <FluxMediaShell
@@ -104,7 +113,7 @@ export function VoiceRoomPage() {
       }
       onEnd={() => nav(backToChannel)}
     >
-      {uiMode === "play" ? <VoiceDock roomId={room.data.id} /> : <MeetingRoom />}
+      {experience.mediaDefaults.room_kind_preference === "voice" ? <VoiceDock roomId={room.data.id} /> : <MeetingRoom />}
     </FluxMediaShell>
   );
 }
