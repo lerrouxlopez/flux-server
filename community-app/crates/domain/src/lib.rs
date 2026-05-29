@@ -45,6 +45,7 @@ pub struct Channel {
 pub enum ChannelKind {
     Text,
     Voice,
+    Video,
     Announcement,
     Private,
 }

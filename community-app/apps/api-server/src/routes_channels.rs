@@ -32,6 +32,7 @@ pub fn router() -> Router<AppState> {
 struct CreateChannelRequest {
     name: String,
     kind: String,
+    experience_mode_hint: Option<String>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -46,6 +47,7 @@ struct ChannelResponse {
     organization_id: Uuid,
     name: String,
     kind: String,
+    experience_mode_hint: Option<String>,
     created_by: Option<Uuid>,
     created_at: OffsetDateTime,
 }
@@ -71,11 +73,23 @@ async fn list_org_channels(
 
     let rows = sqlx::query(
         r#"
-        select id, organization_id, name, kind, created_by, created_at
+        select id, organization_id, name, kind, experience_mode_hint, created_by, created_at
         from channels
         where organization_id = $1
           and kind <> 'dm'
-        order by created_at asc
+        order by
+          case
+            when created_by is null then
+              case name
+                when 'General'       then 0
+                when 'Announcements' then 1
+                when 'Reports'       then 2
+                when 'Voice'         then 3
+                else 4
+              end
+            else 5
+          end,
+          created_at asc
         "#,
     )
     .bind(org_id)
@@ -94,6 +108,7 @@ async fn list_org_channels(
             organization_id: r.get("organization_id"),
             name: r.get("name"),
             kind: r.get("kind"),
+            experience_mode_hint: r.try_get("experience_mode_hint").ok(),
             created_by: r.try_get("created_by").ok(),
             created_at: r.get("created_at"),
         })
@@ -132,20 +147,25 @@ async fn create_channel(
     if name.is_empty() {
         return util::api_error(ApiErrorCode::ValidationError);
     }
+    let hint = match req.experience_mode_hint.as_deref() {
+        None | Some("work") | Some("play") => req.experience_mode_hint,
+        _ => return util::api_error(ApiErrorCode::ValidationError),
+    };
 
     let now = OffsetDateTime::now_utc();
     let channel_id = Uuid::now_v7();
 
     let inserted = sqlx::query(
         r#"
-        insert into channels (id, organization_id, name, kind, created_by, created_at)
-        values ($1, $2, $3, $4, $5, $6)
+        insert into channels (id, organization_id, name, kind, experience_mode_hint, created_by, created_at)
+        values ($1, $2, $3, $4, $5, $6, $7)
         "#,
     )
     .bind(channel_id)
     .bind(org_id)
     .bind(name.clone())
     .bind(kind.clone())
+    .bind(hint.clone())
     .bind(auth.user_id)
     .bind(now)
     .execute(&state.pool)
@@ -170,6 +190,7 @@ async fn create_channel(
                     organization_id: org_id,
                     name,
                     kind,
+                    experience_mode_hint: hint,
                     created_by: Some(auth.user_id),
                     created_at: now,
                 }),
@@ -187,7 +208,7 @@ async fn get_channel(
 ) -> impl IntoResponse {
     let row = sqlx::query(
         r#"
-        select id, organization_id, name, kind, created_by, created_at
+        select id, organization_id, name, kind, experience_mode_hint, created_by, created_at
         from channels
         where id = $1
         "#,
@@ -220,6 +241,7 @@ async fn get_channel(
             organization_id: org_id,
             name: row.get("name"),
             kind: row.get("kind"),
+            experience_mode_hint: row.try_get("experience_mode_hint").ok(),
             created_by: row.try_get("created_by").ok(),
             created_at: row.get("created_at"),
         }),
@@ -373,7 +395,7 @@ async fn delete_channel(
 fn normalize_kind(input: &str) -> Result<String, Box<axum::response::Response>> {
     let k = input.trim().to_lowercase();
     match k.as_str() {
-        "text" | "voice" | "announcement" | "private" => Ok(k),
+        "text" | "voice" | "video" | "announcement" | "private" => Ok(k),
         _ => Err(Box::new(util::api_error(ApiErrorCode::ValidationError))),
     }
 }

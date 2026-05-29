@@ -26,46 +26,20 @@ export function GameShell({ e }: { e: ChannelEngine }) {
             </div>
           </div>
 
-          <div className="flex items-center gap-2">
-            <button
-              className="flux-btn-primary rounded-md px-3 py-2 text-xs font-semibold disabled:opacity-50"
-              disabled={e.createMeeting.isPending}
-              onClick={() => e.createMeeting.mutate()}
-              type="button"
-              title="Jump into a voice room"
-            >
-              Voice
-            </button>
-            <button
-              className={`rounded-md px-3 py-2 text-xs ${
-                e.emojiOpen ? "bg-slate-800 text-white" : "bg-slate-900 text-slate-200 hover:bg-slate-800"
-              }`}
-              onClick={() => e.setEmojiOpen((v) => !v)}
-              type="button"
-              title="Reactions"
-            >
-              Reactions
-            </button>
-          </div>
-        </div>
-
-        {e.emojiOpen ? (
-          <div className="mt-3 flex flex-wrap gap-1 rounded-lg border border-slate-800 bg-slate-950/30 p-2" aria-label="Emoji picker">
-            {EMOJI_PALETTE.map((emoji) => (
+          {e.channel?.kind !== "voice" && e.channel?.kind !== "video" ? (
+            <div className="flex items-center gap-2">
               <button
-                key={emoji}
-                className="grid h-9 w-9 place-items-center rounded-md text-base hover:bg-slate-800/60"
-                onClick={() => {
-                  e.setText((t) => (t ? t + " " + emoji : emoji));
-                }}
+                className="flux-btn-primary rounded-md px-3 py-2 text-xs font-semibold disabled:opacity-50"
+                disabled={e.createMeeting.isPending}
+                onClick={() => e.createMeeting.mutate(undefined)}
                 type="button"
-                title={emoji}
+                title="Jump into a voice room"
               >
-                {emoji}
+                Voice
               </button>
-            ))}
-          </div>
-        ) : null}
+            </div>
+          ) : null}
+        </div>
 
         <MessageViewport
           e={e}
@@ -81,4 +55,3 @@ export function GameShell({ e }: { e: ChannelEngine }) {
     </div>
   );
 }
-

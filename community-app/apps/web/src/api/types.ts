@@ -34,6 +34,7 @@ export type Channel = {
   organization_id: string;
   name: string;
   kind: string;
+  experience_mode_hint?: "work" | "play" | null;
   created_by?: string | null;
   created_at: string;
 };

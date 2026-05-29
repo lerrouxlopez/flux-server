@@ -10,8 +10,98 @@ import { useQuery } from "@tanstack/react-query";
 import { apiFetch } from "../api/client";
 import type { MembersResponse, OrgsListResponse } from "../api/types";
 import { ExperienceProvider } from "../features/experience/ExperienceProvider";
+import { useExperience } from "../features/experience/useExperience";
 import { ToastViewport } from "./ToastViewport";
 import { useRef } from "react";
+import type { CSSProperties } from "react";
+import { useUserThemeStore } from "../state/userTheme";
+import { getThemePreset } from "../branding/presets";
+
+function HeaderExtras(props: { orgSlug: string | null }) {
+  const nav = useNavigate();
+  const experience = useExperience();
+  const [q, setQ] = useState("");
+
+  if (props.orgSlug) {
+    return (
+      <div className="flex flex-1 items-center justify-center gap-3 px-4">
+        <form
+          className="w-full max-w-2xl"
+          onSubmit={(e) => {
+            e.preventDefault();
+            const query = q.trim();
+            if (!query) return;
+            nav(`/app/${props.orgSlug}/search?q=${encodeURIComponent(query)}`);
+          }}
+        >
+          <input
+            className="w-full rounded-xl border border-slate-800 bg-slate-950/40 px-4 py-2 text-sm text-slate-200 outline-none placeholder:text-slate-500 focus:border-[color:var(--flux-focus-border)]"
+            placeholder="Search this org..."
+            value={q}
+            onChange={(e) => setQ(e.target.value)}
+          />
+        </form>
+
+        <div className="flex items-center overflow-hidden rounded-md border border-slate-800 bg-slate-950/40">
+          <button
+            className={`px-3 py-1.5 text-sm ${experience.rawMode === "work" ? "flux-btn-primary" : "text-slate-200 hover:bg-slate-900"}`}
+            onClick={() => experience.setMode("work")}
+            type="button"
+          >
+            Work
+          </button>
+          <button
+            className={`px-3 py-1.5 text-sm ${experience.rawMode === "play" ? "flux-btn-primary" : "text-slate-200 hover:bg-slate-900"}`}
+            onClick={() => experience.setMode("play")}
+            type="button"
+          >
+            Play
+          </button>
+        </div>
+      </div>
+    );
+  }
+
+  return (
+    <div className="flex flex-1 items-center justify-center gap-3 px-4">
+      <form
+        className="w-full max-w-2xl"
+        onSubmit={(e) => {
+          e.preventDefault();
+          const query = q.trim();
+          if (!query) return;
+          nav(`/orgs?tab=discover&q=${encodeURIComponent(query)}`);
+        }}
+      >
+        <input
+          className="w-full rounded-xl border border-slate-800 bg-slate-950/40 px-4 py-2 text-sm text-slate-200 outline-none placeholder:text-slate-500 focus:border-[color:var(--flux-focus-border)]"
+          placeholder="Search organizations, channels, messages..."
+          value={q}
+          onChange={(e) => setQ(e.target.value)}
+        />
+      </form>
+
+      <div className="flex items-center overflow-hidden rounded-md border border-slate-800 bg-slate-950/40">
+        <button
+          className={`px-3 py-2 text-sm ${experience.rawMode === "work" ? "flux-btn-primary" : "text-slate-200 hover:bg-slate-900"}`}
+          onClick={() => experience.setMode("work")}
+          type="button"
+          title="Switch to Work Mode"
+        >
+          Work
+        </button>
+        <button
+          className={`px-3 py-2 text-sm ${experience.rawMode === "play" ? "flux-btn-primary" : "text-slate-200 hover:bg-slate-900"}`}
+          onClick={() => experience.setMode("play")}
+          type="button"
+          title="Switch to Game Mode"
+        >
+          Play
+        </button>
+      </div>
+    </div>
+  );
+}
 
 export function AppShell() {
   const user = useAuthStore((s) => s.user);
@@ -21,6 +111,19 @@ export function AppShell() {
   const menuRef = useRef<HTMLDivElement | null>(null);
   const nav = useNavigate();
   const loc = useLocation();
+  const userThemeId = useUserThemeStore((s) => s.themeId);
+  const userThemePreset = getThemePreset(userThemeId);
+  const userMenuStyle = {
+    colorScheme: userThemePreset.colorScheme,
+    ["--brand-primary" as any]: userThemePreset.vars.brandPrimary,
+    ["--brand-secondary" as any]: userThemePreset.vars.brandSecondary,
+    ["--flux-on-accent" as any]: userThemePreset.vars.onPrimary,
+    ["--app-bg" as any]: userThemePreset.vars.appBg,
+    ["--app-surface" as any]: userThemePreset.vars.appSurface,
+    ["--app-border" as any]: userThemePreset.vars.appBorder,
+    ["--app-text" as any]: userThemePreset.vars.appText,
+    ["--app-muted" as any]: userThemePreset.vars.appMuted,
+  } as CSSProperties;
 
   const currentOrgSlug = (() => {
     const m = loc.pathname.match(/^\/(?:app|admin)\/([^/]+)/);
@@ -97,6 +200,8 @@ export function AppShell() {
                 <BrandLogo showText={true} height={70} width={80} />
               </Link>
 
+              {user ? <HeaderExtras orgSlug={currentOrgSlug} /> : null}
+
               <div className="flex items-center gap-3">
                 {user ? (
                   <>
@@ -126,8 +231,10 @@ export function AppShell() {
                       {menuOpen ? (
                         <div
                           aria-label="User menu"
-                          className="flux-theme-lock absolute right-0 mt-2 w-48 overflow-hidden rounded-xl border border-slate-800 bg-slate-950 shadow-xl"
+                          className="absolute right-0 mt-2 w-48 overflow-hidden rounded-xl border border-slate-800 bg-slate-950 shadow-xl"
                           role="menu"
+                          data-color-scheme={userThemePreset.colorScheme}
+                          style={userMenuStyle}
                         >
                           <button
                             className="block w-full px-3 py-2 text-left text-sm text-slate-200 hover:bg-slate-900"

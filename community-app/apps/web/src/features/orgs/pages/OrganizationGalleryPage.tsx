@@ -1,5 +1,5 @@
-import { useMemo, useState } from "react";
-import { useNavigate } from "react-router-dom";
+import { useEffect, useMemo, useState } from "react";
+import { useNavigate, useSearchParams } from "react-router-dom";
 import type { DiscoverOrg, JoinPolicy } from "../../../api/types";
 import { Button } from "../../../components/Button";
 import { useAuthStore } from "../../../state/auth";
@@ -33,12 +33,47 @@ function SkeletonCard(props: { compact: boolean }) {
 
 export function OrganizationGalleryPage() {
   const nav = useNavigate();
+  const [searchParams, setSearchParams] = useSearchParams();
   const user = useAuthStore((s) => s.user);
   const experience = useExperience();
 
   const [tab, setTab] = useState<OrgGalleryTab>("my_orgs");
   const [query, setQuery] = useState("");
   const [policy, setPolicy] = useState<JoinPolicy | "any">("any");
+  const [hydratedFromUrl, setHydratedFromUrl] = useState(false);
+
+  useEffect(() => {
+    if (hydratedFromUrl) return;
+
+    const urlTab = (searchParams.get("tab") ?? "").trim();
+    const urlQ = (searchParams.get("q") ?? "").trim();
+    const urlPolicy = (searchParams.get("policy") ?? "").trim();
+
+    if (urlTab === "my_orgs" || urlTab === "discover" || urlTab === "requests" || urlTab === "invites") {
+      setTab(urlTab as OrgGalleryTab);
+    }
+    if (urlQ) setQuery(urlQ);
+    if (urlPolicy) setPolicy(normalizePolicy(urlPolicy));
+
+    setHydratedFromUrl(true);
+  }, [hydratedFromUrl, searchParams]);
+
+  useEffect(() => {
+    if (!hydratedFromUrl) return;
+
+    const next = new URLSearchParams(searchParams);
+    next.set("tab", tab);
+
+    if (query.trim()) next.set("q", query.trim());
+    else next.delete("q");
+
+    if (policy !== "any") next.set("policy", policy);
+    else next.delete("policy");
+
+    if (next.toString() !== searchParams.toString()) {
+      setSearchParams(next, { replace: true });
+    }
+  }, [hydratedFromUrl, policy, query, searchParams, setSearchParams, tab]);
 
   const [createOpen, setCreateOpen] = useState(false);
   const [inviteOpen, setInviteOpen] = useState(false);
@@ -241,4 +276,3 @@ export function OrganizationGalleryPage() {
     </div>
   );
 }
-

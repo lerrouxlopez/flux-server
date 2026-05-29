@@ -335,23 +335,32 @@ async fn create_org(
         return util::api_error(ApiErrorCode::InternalError);
     }
 
-    // Default channels
-    let general_id = Uuid::now_v7();
+    // Default channels:
+    //   Work mode:  General, Announcements, Reports
+    //   Play mode:  General, Announcements, Voice
+    // Announcements has no mode hint so it appears in both modes.
+    let work_general_id = Uuid::now_v7();
     let announcements_id = Uuid::now_v7();
-    let voice_id = Uuid::now_v7();
+    let work_reports_id = Uuid::now_v7();
+    let play_general_id = Uuid::now_v7();
+    let play_voice_id = Uuid::now_v7();
 
     let channels_insert = sqlx::query(
         r#"
-        insert into channels (id, organization_id, name, kind, created_at)
+        insert into channels (id, organization_id, name, kind, experience_mode_hint, created_at)
         values
-          ($1, $4, 'general', 'text', $5),
-          ($2, $4, 'announcements', 'announcement', $5),
-          ($3, $4, 'General Voice', 'voice', $5)
+          ($1, $6, 'General',       'text',         'work', $7),
+          ($2, $6, 'Announcements', 'announcement',  NULL,   $7),
+          ($3, $6, 'Reports',       'text',          'work', $7),
+          ($4, $6, 'General',       'text',          'play', $7),
+          ($5, $6, 'Voice',         'voice',         'play', $7)
         "#,
     )
-    .bind(general_id)
+    .bind(work_general_id)
     .bind(announcements_id)
-    .bind(voice_id)
+    .bind(work_reports_id)
+    .bind(play_general_id)
+    .bind(play_voice_id)
     .bind(org_id)
     .bind(now)
     .execute(&mut *tx)

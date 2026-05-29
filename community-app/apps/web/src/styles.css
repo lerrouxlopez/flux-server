@@ -188,23 +188,6 @@
 
 /* Theme lock — CSS vars are reset to Teams Dark so all token references inside
    this element always render in the default dark palette, ignoring active theme. */
-.flux-theme-lock {
-  --app-bg: #1f1f1f;
-  --app-surface: #292929;
-  --app-border: #3d3c42;
-  --app-text: #f3f2f1;
-  --app-muted: #a6a7a9;
-  --brand-primary: #6264a7;
-  --brand-secondary: #5b5fc7;
-  --flux-color-accent: #6264a7;
-  --flux-color-bg: #1f1f1f;
-  --flux-color-surface-1: #292929;
-  --flux-color-border: #3d3c42;
-  --flux-color-text: #f3f2f1;
-  --flux-color-muted: #a6a7a9;
-  --flux-on-accent: #ffffff;
-}
-
 /* Token utilities (prefer these in primary shells/screens) */
 @layer utilities {
   .flux-bubble-me {

@@ -176,7 +176,7 @@ export function ExperienceProvider(props: {
     setPreviewBrandingData(data);
   }, []);
 
-  const resolvedMode: RawExperienceMode = normalizeMode(ctx.data?.mode) ?? localMode;
+  const resolvedMode: RawExperienceMode = localMode;
 
   // In org context: org admin controls the theme (preview may override).
   // Outside org context: user's personal theme preference applies.

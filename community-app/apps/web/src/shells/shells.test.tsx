@@ -119,10 +119,10 @@ describe("Shells", () => {
     expect(screen.getByRole("button", { name: "Start meeting" })).toBeInTheDocument();
   });
 
-  it("GameShell shows compact density and reactions control", () => {
+  it("GameShell shows compact density and voice control", () => {
     renderWithProviders(<GameShell e={fakeEngine({ uiMode: "play" })} />);
     expect(screen.getByTestId("game-shell")).toBeInTheDocument();
-    expect(screen.getByText("Reactions")).toBeInTheDocument();
+    expect(screen.queryByText("Reactions")).not.toBeInTheDocument();
     expect(screen.getByText("Voice")).toBeInTheDocument();
   });
 });

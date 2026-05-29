@@ -1,4 +1,4 @@
-import { useNavigate, useParams } from "react-router-dom";
+import { useLocation, useNavigate, useParams } from "react-router-dom";
 import { useQuery } from "@tanstack/react-query";
 import "@livekit/components-styles";
 import { apiFetch } from "../api/client";
@@ -25,6 +25,8 @@ function normalizeLiveKitWsUrl(url: string) {
 export function VoiceRoomPage() {
   const { room_id, org_slug } = useParams();
   const nav = useNavigate();
+  const location = useLocation();
+  const fallbackChannelId = (location.state as { backTo?: string } | null)?.backTo;
   const experience = useExperience();
   const deviceId = useDeviceId();
 
@@ -90,11 +92,13 @@ export function VoiceRoomPage() {
 
   const serverUrl = normalizeLiveKitWsUrl(join.data.livekit_url);
   const backToChannel =
-    room.data.channel_id && org_slug
-      ? `/app/${org_slug}/channels/${room.data.channel_id}`
-      : org_slug
-        ? `/app/${org_slug}`
-        : "/orgs";
+    fallbackChannelId && org_slug
+      ? `/app/${org_slug}/channels/${fallbackChannelId}`
+      : room.data.channel_id && org_slug
+        ? `/app/${org_slug}/channels/${room.data.channel_id}`
+        : org_slug
+          ? `/app/${org_slug}`
+          : "/orgs";
 
   return (
     <FluxMediaShell

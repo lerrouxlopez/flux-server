@@ -4,6 +4,7 @@ import { MemoryRouter, Route, Routes } from "react-router-dom";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { AppShell } from "./AppShell";
 import { useAuthStore } from "../state/auth";
+import { useUserThemeStore } from "../state/userTheme";
 
 vi.mock("../api/client", () => {
   return {
@@ -63,6 +64,8 @@ beforeEach(() => {
     loadMe: vi.fn(async () => {}),
     logout: vi.fn(async () => {}),
   } as any);
+
+  useUserThemeStore.setState({ themeId: "teams-dark" });
 });
 
 function renderApp(initialPath: string) {
@@ -105,5 +108,17 @@ describe("AppShell user menu", () => {
     await waitFor(() => {
       expect(screen.queryByLabelText("User menu")).not.toBeInTheDocument();
     });
+  });
+
+  it("renders the menu with the user's theme variables (not the org theme)", async () => {
+    useUserThemeStore.setState({ themeId: "slate" });
+
+    renderApp("/app/acme/channels/ch-1");
+
+    fireEvent.click(screen.getByText("Me"));
+
+    const menu = await screen.findByLabelText("User menu");
+    expect(menu).toHaveStyle({ "--app-bg": "#f8fafc" });
+    expect(menu).toHaveStyle({ "--app-text": "#0f172a" });
   });
 });

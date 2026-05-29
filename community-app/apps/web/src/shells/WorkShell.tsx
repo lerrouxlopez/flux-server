@@ -25,17 +25,19 @@ export function WorkShell({ e }: { e: ChannelEngine }) {
             {!e.editingChannelName ? (
               <div className="flex items-center gap-2">
                 <div className="text-lg font-semibold">{e.channelTitle}</div>
-                <button
-                  className="grid h-8 w-8 place-items-center rounded-md border border-slate-800 bg-slate-900 text-slate-200 hover:bg-slate-800/60 disabled:opacity-50"
-                  disabled={e.createMeeting.isPending}
-                  onClick={() => e.createMeeting.mutate()}
-                  title="Start meeting"
-                  type="button"
-                  data-testid="meeting-control"
-                  aria-label="Start meeting"
-                >
-                  <span aria-hidden="true">🎥</span>
-                </button>
+                {e.channel?.kind !== "voice" && e.channel?.kind !== "video" ? (
+                  <button
+                    className="grid h-8 w-8 place-items-center rounded-md border border-slate-800 bg-slate-900 text-slate-200 hover:bg-slate-800/60 disabled:opacity-50"
+                    disabled={e.createMeeting.isPending}
+                    onClick={() => e.createMeeting.mutate(undefined)}
+                    title="Start meeting"
+                    type="button"
+                    data-testid="meeting-control"
+                    aria-label="Start meeting"
+                  >
+                    <span aria-hidden="true">🎥</span>
+                  </button>
+                ) : null}
                 <input
                   className="flux-input w-[140px] rounded-md border px-3 py-2 text-sm outline-none sm:w-[260px]"
                   placeholder="Search messages..."

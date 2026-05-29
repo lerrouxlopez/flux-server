@@ -35,6 +35,7 @@ export function useChannelEngine() {
   const meId = me?.id ?? null;
   const loadOrgBranding = useBrandingStore((s) => s.loadOrgBranding);
   const uiMode = useExperience().rawMode;
+  const prevModeRef = useRef(uiMode);
   const pushToast = useToastStore((s) => s.push);
 
   const [text, setText] = useState("");
@@ -370,20 +371,58 @@ export function useChannelEngine() {
   });
 
   const createMeeting = useMutation({
-    mutationFn: async () => {
+    mutationFn: async (opts?: { mediaKind?: "voice" | "meeting"; replaceHistory?: boolean; fallbackChannelId?: string }) => {
       return apiFetch<MediaRoom>(`/orgs/${org!.id}/media/rooms`, {
         method: "POST",
         body: JSON.stringify({
-          kind: "meeting",
+          kind: opts?.mediaKind ?? "meeting",
           channel_id: channel_id,
           name: `Meeting - ${channel?.name ?? "channel"}`,
         }),
       });
     },
-    onSuccess: (room) => {
-      nav(`/app/${org!.slug}/voice/${room.id}`);
+    onSuccess: (room, opts) => {
+      const state = opts?.fallbackChannelId ? { backTo: opts.fallbackChannelId } : undefined;
+      nav(`/app/${org!.slug}/voice/${room.id}`, { replace: opts?.replaceHistory, state });
     },
   });
+
+  const autoJoinedVoiceForChannel = useRef<string | null>(null);
+  useEffect(() => {
+    if (!channel_id) return;
+    if (channel?.kind !== "voice" && channel?.kind !== "video") return;
+    if (createMeeting.isPending) return;
+    if (autoJoinedVoiceForChannel.current === channel_id) return;
+    autoJoinedVoiceForChannel.current = channel_id;
+    const mediaKind = channel.kind === "video" ? "meeting" : "voice";
+    const modeChannels = (channels.data?.channels ?? []).filter(
+      (c) => !c.experience_mode_hint || c.experience_mode_hint === uiMode,
+    );
+    const fallback =
+      modeChannels.find((c) => c.name.toLowerCase() === "general" && c.kind === "text") ??
+      modeChannels.find((c) => c.kind === "text") ??
+      null;
+    createMeeting.mutate({ mediaKind, replaceHistory: true, fallbackChannelId: fallback?.id });
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [channel_id, channel?.kind]);
+
+  // When the user switches modes, navigate to the General channel of the new mode.
+  useEffect(() => {
+    const prev = prevModeRef.current;
+    prevModeRef.current = uiMode;
+    if (prev === uiMode) return;
+    if (!org?.slug || !channels.data) return;
+    const modeChannels = channels.data.channels.filter(
+      (c) => !c.experience_mode_hint || c.experience_mode_hint === uiMode,
+    );
+    const target =
+      modeChannels.find((c) => c.name.toLowerCase() === "general" && c.kind === "text") ??
+      modeChannels.find((c) => c.kind === "text") ??
+      modeChannels[0] ??
+      null;
+    if (target) nav(`/app/${org.slug}/channels/${target.id}`);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [uiMode]);
 
   function onTypingChange(v: string) {
     setText(v);
@@ -549,7 +588,11 @@ export function useChannelEngine() {
     },
   });
 
-  const channelTitle = channel?.kind === "dm" ? `Direct message` : `# ${channel?.name ?? ""}`;
+  const channelTitle =
+    channel?.kind === "dm" ? "Direct message"
+    : channel?.kind === "voice" ? `🔊 ${channel.name}`
+    : channel?.kind === "video" ? `🎥 ${channel.name}`
+    : `# ${channel?.name ?? ""}`;
 
   return {
     // context
