@@ -4,7 +4,7 @@ use axum::{
     http::StatusCode,
     response::IntoResponse,
     routing::{get, post},
-    Extension, Router,
+    Router,
 };
 use base64::Engine;
 use permissions::{perms, Perms};
@@ -210,7 +210,7 @@ struct DiscoverySettingsResponse {
 
 async fn create_org(
     State(state): State<AppState>,
-    Extension(auth): Extension<AuthContext>,
+    auth: AuthContext,
     Json(req): Json<CreateOrgRequest>,
 ) -> impl IntoResponse {
     let name = req.name.trim().to_string();
@@ -410,9 +410,30 @@ fn is_safe_http_url(s: &str) -> bool {
     t.starts_with("http://") || t.starts_with("https://")
 }
 
+fn is_safe_image_source(s: &str, max_bytes: usize) -> bool {
+    let t = s.trim();
+    if t.is_empty() {
+        return false;
+    }
+    if is_safe_http_url(t) {
+        return true;
+    }
+    if t.starts_with("data:") {
+        let (mime, bytes) = match crate::attachments_storage::parse_data_url(t) {
+            Ok(v) => v,
+            Err(_) => return false,
+        };
+        if !mime.starts_with("image/") {
+            return false;
+        }
+        return bytes.len() <= max_bytes;
+    }
+    false
+}
+
 async fn discover_orgs(
     State(state): State<AppState>,
-    Extension(auth): Extension<AuthContext>,
+    auth: AuthContext,
     Query(q): Query<DiscoverQuery>,
 ) -> impl IntoResponse {
     let q_str = q.q.unwrap_or_default().trim().to_string();
@@ -542,7 +563,7 @@ async fn discover_orgs(
 
 async fn join_open_org(
     State(state): State<AppState>,
-    Extension(auth): Extension<AuthContext>,
+    auth: AuthContext,
     Path(org_id): Path<Uuid>,
 ) -> impl IntoResponse {
     Span::current().record("organization_id", tracing::field::display(org_id));
@@ -604,7 +625,7 @@ async fn join_open_org(
 
 async fn create_join_request(
     State(state): State<AppState>,
-    Extension(auth): Extension<AuthContext>,
+    auth: AuthContext,
     Path(org_id): Path<Uuid>,
     Json(req): Json<CreateJoinRequest>,
 ) -> impl IntoResponse {
@@ -717,7 +738,7 @@ async fn create_join_request(
 
 async fn list_join_requests(
     State(state): State<AppState>,
-    Extension(auth): Extension<AuthContext>,
+    auth: AuthContext,
     Path(org_id): Path<Uuid>,
 ) -> impl IntoResponse {
     Span::current().record("organization_id", tracing::field::display(org_id));
@@ -766,7 +787,7 @@ async fn list_join_requests(
 
 async fn approve_join_request(
     State(state): State<AppState>,
-    Extension(auth): Extension<AuthContext>,
+    auth: AuthContext,
     Path((org_id, request_id)): Path<(Uuid, Uuid)>,
 ) -> impl IntoResponse {
     Span::current().record("organization_id", tracing::field::display(org_id));
@@ -863,7 +884,7 @@ async fn approve_join_request(
 
 async fn reject_join_request(
     State(state): State<AppState>,
-    Extension(auth): Extension<AuthContext>,
+    auth: AuthContext,
     Path((org_id, request_id)): Path<(Uuid, Uuid)>,
 ) -> impl IntoResponse {
     Span::current().record("organization_id", tracing::field::display(org_id));
@@ -914,7 +935,7 @@ async fn reject_join_request(
 
 async fn patch_discovery_settings(
     State(state): State<AppState>,
-    Extension(auth): Extension<AuthContext>,
+    auth: AuthContext,
     Path(org_id): Path<Uuid>,
     Json(req): Json<PatchDiscoverySettingsRequest>,
 ) -> impl IntoResponse {
@@ -941,7 +962,11 @@ async fn patch_discovery_settings(
         .as_ref()
         .map(|s| s.trim().to_string())
         .filter(|s| !s.is_empty());
-    if req.avatar_url.is_some() && avatar_url.as_deref().is_some_and(|u| !is_safe_http_url(u)) {
+    if req.avatar_url.is_some()
+        && avatar_url
+            .as_deref()
+            .is_some_and(|u| !is_safe_image_source(u, 256 * 1024))
+    {
         return util::api_error(ApiErrorCode::ValidationError);
     }
 
@@ -950,7 +975,11 @@ async fn patch_discovery_settings(
         .as_ref()
         .map(|s| s.trim().to_string())
         .filter(|s| !s.is_empty());
-    if req.banner_url.is_some() && banner_url.as_deref().is_some_and(|u| !is_safe_http_url(u)) {
+    if req.banner_url.is_some()
+        && banner_url
+            .as_deref()
+            .is_some_and(|u| !is_safe_image_source(u, 1024 * 1024))
+    {
         return util::api_error(ApiErrorCode::ValidationError);
     }
 
@@ -1027,7 +1056,7 @@ async fn patch_discovery_settings(
 
 async fn get_discovery_settings(
     State(state): State<AppState>,
-    Extension(auth): Extension<AuthContext>,
+    auth: AuthContext,
     Path(org_id): Path<Uuid>,
 ) -> impl IntoResponse {
     Span::current().record("organization_id", tracing::field::display(org_id));
@@ -1086,7 +1115,7 @@ async fn get_discovery_settings(
 
 async fn list_orgs(
     State(state): State<AppState>,
-    Extension(auth): Extension<AuthContext>,
+    auth: AuthContext,
 ) -> impl IntoResponse {
     let rows = sqlx::query(
         r#"
@@ -1121,7 +1150,7 @@ async fn list_orgs(
 
 async fn get_org(
     State(state): State<AppState>,
-    Extension(auth): Extension<AuthContext>,
+    auth: AuthContext,
     Path(org_id): Path<Uuid>,
 ) -> impl IntoResponse {
     Span::current().record("organization_id", tracing::field::display(org_id));
@@ -1165,7 +1194,7 @@ async fn get_org(
 
 async fn list_members(
     State(state): State<AppState>,
-    Extension(auth): Extension<AuthContext>,
+    auth: AuthContext,
     Path(org_id): Path<Uuid>,
 ) -> impl IntoResponse {
     Span::current().record("organization_id", tracing::field::display(org_id));
@@ -1211,7 +1240,7 @@ async fn list_members(
 
 async fn join_org_by_invite(
     State(state): State<AppState>,
-    Extension(auth): Extension<AuthContext>,
+    auth: AuthContext,
     Json(req): Json<JoinOrgRequest>,
 ) -> impl IntoResponse {
     let slug = req.slug.trim().to_lowercase();
@@ -1337,7 +1366,7 @@ struct UpdateMemberRoleRequest {
 
 async fn update_member_role(
     State(state): State<AppState>,
-    Extension(auth): Extension<AuthContext>,
+    auth: AuthContext,
     Path((org_id, user_id)): Path<(Uuid, Uuid)>,
     Json(req): Json<UpdateMemberRoleRequest>,
 ) -> impl IntoResponse {
@@ -1447,7 +1476,7 @@ async fn update_member_role(
 
 async fn list_roles(
     State(state): State<AppState>,
-    Extension(auth): Extension<AuthContext>,
+    auth: AuthContext,
     Path(org_id): Path<Uuid>,
 ) -> impl IntoResponse {
     Span::current().record("organization_id", tracing::field::display(org_id));
@@ -1489,7 +1518,7 @@ async fn list_roles(
 
 async fn create_invite(
     State(state): State<AppState>,
-    Extension(auth): Extension<AuthContext>,
+    auth: AuthContext,
     Path(org_id): Path<Uuid>,
     Json(req): Json<CreateInviteRequest>,
 ) -> impl IntoResponse {
@@ -1557,7 +1586,7 @@ async fn create_invite(
 
 async fn add_member(
     State(state): State<AppState>,
-    Extension(auth): Extension<AuthContext>,
+    auth: AuthContext,
     Path(org_id): Path<Uuid>,
     Json(req): Json<AddMemberRequest>,
 ) -> impl IntoResponse {

@@ -5,7 +5,7 @@ use axum::{
     http::StatusCode,
     response::IntoResponse,
     routing::{get, post},
-    Extension, Json, Router,
+    Json, Router,
 };
 use serde::Serialize;
 use sqlx::Row;
@@ -39,7 +39,7 @@ struct DmsResponse {
 
 async fn list_dms(
     State(state): State<AppState>,
-    Extension(auth): Extension<AuthContext>,
+    auth: AuthContext,
     Path(org_id): Path<Uuid>,
 ) -> impl IntoResponse {
     Span::current().record("organization_id", tracing::field::display(org_id));
@@ -94,7 +94,7 @@ async fn list_dms(
 
 async fn create_or_get_dm(
     State(state): State<AppState>,
-    Extension(auth): Extension<AuthContext>,
+    auth: AuthContext,
     Path((org_id, user_id)): Path<(Uuid, Uuid)>,
 ) -> impl IntoResponse {
     Span::current().record("organization_id", tracing::field::display(org_id));

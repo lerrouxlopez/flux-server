@@ -42,7 +42,7 @@ describe("CreateOrgModal", () => {
     });
 
     await user.type(screen.getByLabelText("Org details"), "Hello world");
-    await user.type(screen.getByLabelText("Org picture / logo (URL)"), "https://example.com/logo.png");
+    await user.type(screen.getByLabelText("Org logo URL"), "https://example.com/logo.png");
     await user.selectOptions(screen.getByLabelText("Type"), "open");
 
     await user.click(screen.getByRole("button", { name: "Create" }));
@@ -66,4 +66,3 @@ describe("CreateOrgModal", () => {
     );
   });
 });
-

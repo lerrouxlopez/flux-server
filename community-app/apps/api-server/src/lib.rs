@@ -1,4 +1,8 @@
 use axum::{extract::State, http::StatusCode, response::IntoResponse, Json};
+use axum::{
+    extract::FromRequestParts,
+    http::request::Parts,
+};
 use redis::AsyncCommands;
 use sqlx::PgPool;
 use uuid::Uuid;
@@ -60,6 +64,21 @@ impl AppState {
 #[derive(Debug, Clone)]
 pub struct AuthContext {
     pub(crate) user_id: Uuid,
+}
+
+impl<S> FromRequestParts<S> for AuthContext
+where
+    S: Send + Sync,
+{
+    type Rejection = api::ApiError;
+
+    fn from_request_parts(
+        parts: &mut Parts,
+        _state: &S,
+    ) -> impl std::future::Future<Output = Result<Self, Self::Rejection>> + Send {
+        let v = parts.extensions.get::<AuthContext>().cloned();
+        std::future::ready(v.ok_or_else(|| api::ApiError::new(api::ApiErrorCode::Unauthenticated)))
+    }
 }
 
 pub async fn readyz(State(state): State<AppState>) -> impl IntoResponse {

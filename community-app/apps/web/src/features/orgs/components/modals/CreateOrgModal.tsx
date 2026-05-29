@@ -28,6 +28,7 @@ export function CreateOrgModal(props: { open: boolean; onClose: () => void; onCr
   const [slugTouched, setSlugTouched] = useState(false);
   const [details, setDetails] = useState("");
   const [logoUrl, setLogoUrl] = useState("");
+  const [logoErr, setLogoErr] = useState<string | null>(null);
   const [joinType, setJoinType] = useState<OrgJoinType>("invite_only");
   const [err, setErr] = useState<string | null>(null);
 
@@ -114,14 +115,43 @@ export function CreateOrgModal(props: { open: boolean; onClose: () => void; onCr
         </div>
         <div>
           <label className="mb-1 block text-sm text-slate-300" htmlFor="org-logo">
-            Org picture / logo (URL)
+            Org picture / logo
           </label>
-          <Input
-            id="org-logo"
-            value={logoUrl}
-            onChange={(e) => setLogoUrl(e.target.value)}
-            placeholder="https://..."
-          />
+          <div className="grid gap-2">
+            <input
+              id="org-logo"
+              accept="image/*"
+              className="block w-full rounded-md border border-slate-800 bg-slate-900 px-3 py-2 text-sm text-slate-200 file:mr-3 file:rounded file:border-0 file:bg-slate-800 file:px-3 file:py-1.5 file:text-sm file:text-slate-200 hover:file:bg-slate-700"
+              onChange={(e) => {
+                const file = e.target.files?.[0] ?? null;
+                setLogoErr(null);
+                if (!file) return;
+                if (!file.type.startsWith("image/")) {
+                  setLogoErr("Please choose an image file.");
+                  return;
+                }
+                if (file.size > 256 * 1024) {
+                  setLogoErr("Logo must be 256KB or smaller.");
+                  return;
+                }
+                const reader = new FileReader();
+                reader.onload = () => {
+                  const v = String(reader.result ?? "");
+                  setLogoUrl(v);
+                };
+                reader.readAsDataURL(file);
+              }}
+              type="file"
+            />
+            <div className="text-xs text-slate-500">Or paste an image URL below.</div>
+            <Input
+              aria-label="Org logo URL"
+              value={logoUrl.startsWith("data:") ? "" : logoUrl}
+              onChange={(e) => setLogoUrl(e.target.value)}
+              placeholder="https://..."
+            />
+          </div>
+          {logoErr ? <div className="text-sm text-red-400">{logoErr}</div> : null}
           {logoUrl.trim() ? (
             <div className="mt-2 flex items-center gap-3">
               <img

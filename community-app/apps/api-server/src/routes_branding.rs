@@ -5,7 +5,7 @@ use axum::{
     http::StatusCode,
     response::IntoResponse,
     routing::{get, post},
-    Extension, Router,
+    Router,
 };
 use serde::{Deserialize, Serialize};
 use sqlx::Row;
@@ -159,7 +159,7 @@ async fn public_branding(
 
 async fn get_org_branding(
     State(state): State<AppState>,
-    Extension(auth): Extension<AuthContext>,
+    auth: AuthContext,
     Path(org_id): Path<Uuid>,
 ) -> impl IntoResponse {
     Span::current().record("organization_id", tracing::field::display(org_id));
@@ -231,7 +231,7 @@ async fn get_org_branding(
 
 async fn patch_org_branding(
     State(state): State<AppState>,
-    Extension(auth): Extension<AuthContext>,
+    auth: AuthContext,
     Path(org_id): Path<Uuid>,
     Json(req): Json<serde_json::Value>,
 ) -> impl IntoResponse {
@@ -379,7 +379,7 @@ async fn patch_org_branding(
 
 async fn preview_org_branding(
     State(state): State<AppState>,
-    Extension(auth): Extension<AuthContext>,
+    auth: AuthContext,
     Path(org_id): Path<Uuid>,
     Json(req): Json<serde_json::Value>,
 ) -> impl IntoResponse {

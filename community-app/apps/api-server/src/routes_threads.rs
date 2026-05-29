@@ -5,7 +5,7 @@ use axum::{
     http::StatusCode,
     response::IntoResponse,
     routing::{get, post},
-    Extension, Router,
+    Router,
 };
 use events::envelope::EventEnvelope;
 use serde::{Deserialize, Serialize};
@@ -79,7 +79,7 @@ struct ThreadsListResponse {
 
 async fn list_threads(
     State(state): State<AppState>,
-    Extension(auth): Extension<AuthContext>,
+    auth: AuthContext,
     Path(channel_id): Path<Uuid>,
 ) -> impl IntoResponse {
     let can_access = match util::can_access_channel(&state.pool, auth.user_id, channel_id).await {
@@ -171,7 +171,7 @@ async fn list_threads(
 
 async fn create_thread_root(
     State(state): State<AppState>,
-    Extension(auth): Extension<AuthContext>,
+    auth: AuthContext,
     Path(channel_id): Path<Uuid>,
     Json(req): Json<CreateThreadRequest>,
 ) -> impl IntoResponse {
@@ -337,7 +337,7 @@ struct ReplyRequest {
 
 async fn create_thread_reply(
     State(state): State<AppState>,
-    Extension(auth): Extension<AuthContext>,
+    auth: AuthContext,
     Path(thread_id): Path<Uuid>,
     Json(req): Json<ReplyRequest>,
 ) -> impl IntoResponse {
@@ -446,7 +446,7 @@ async fn create_thread_reply(
 
 async fn get_thread(
     State(state): State<AppState>,
-    Extension(auth): Extension<AuthContext>,
+    auth: AuthContext,
     Path(thread_id): Path<Uuid>,
 ) -> impl IntoResponse {
     let thread = match get_thread_row(&state.pool, thread_id).await {
@@ -510,7 +510,7 @@ struct PinRequest {
 
 async fn pin_message(
     State(state): State<AppState>,
-    Extension(auth): Extension<AuthContext>,
+    auth: AuthContext,
     Path(channel_id): Path<Uuid>,
     Json(req): Json<PinRequest>,
 ) -> impl IntoResponse {
@@ -607,7 +607,7 @@ async fn pin_message(
 
 async fn unpin_message(
     State(state): State<AppState>,
-    Extension(auth): Extension<AuthContext>,
+    auth: AuthContext,
     Path((channel_id, message_id)): Path<(Uuid, Uuid)>,
 ) -> impl IntoResponse {
     let can_access = match util::can_access_channel(&state.pool, auth.user_id, channel_id).await {
@@ -677,7 +677,7 @@ struct PinsResponse {
 
 async fn list_pins(
     State(state): State<AppState>,
-    Extension(auth): Extension<AuthContext>,
+    auth: AuthContext,
     Path(channel_id): Path<Uuid>,
 ) -> impl IntoResponse {
     let can_access = match util::can_access_channel(&state.pool, auth.user_id, channel_id).await {
@@ -751,7 +751,7 @@ struct SearchQuery {
 
 async fn search_channel(
     State(state): State<AppState>,
-    Extension(auth): Extension<AuthContext>,
+    auth: AuthContext,
     Path(channel_id): Path<Uuid>,
     Query(q): Query<SearchQuery>,
 ) -> impl IntoResponse {

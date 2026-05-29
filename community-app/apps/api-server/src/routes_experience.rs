@@ -5,7 +5,7 @@ use axum::{
     http::StatusCode,
     response::IntoResponse,
     routing::{get, patch},
-    Extension, Router,
+    Router,
 };
 use permissions::perms;
 use serde::{Deserialize, Serialize};
@@ -39,7 +39,7 @@ struct ExperienceContextResponse {
 
 async fn get_experience_context(
     State(state): State<AppState>,
-    Extension(auth): Extension<AuthContext>,
+    auth: AuthContext,
     Query(q): Query<ExperienceContextQuery>,
 ) -> impl IntoResponse {
     Span::current().record("organization_id", tracing::field::display(q.org_id));
@@ -160,7 +160,7 @@ struct PatchExperiencePreferencesRequest {
 
 async fn patch_experience_preferences(
     State(state): State<AppState>,
-    Extension(auth): Extension<AuthContext>,
+    auth: AuthContext,
     Json(req): Json<PatchExperiencePreferencesRequest>,
 ) -> impl IntoResponse {
     // Resolve mode: present key → Some(value or null); absent key → no change

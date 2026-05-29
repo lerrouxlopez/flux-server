@@ -5,7 +5,7 @@ use axum::{
     http::StatusCode,
     response::IntoResponse,
     routing::{delete, get, patch, post},
-    Extension, Router,
+    Router,
 };
 use base64::Engine;
 use events::envelope::EventEnvelope;
@@ -108,7 +108,7 @@ struct ReactionRequest {
 
 async fn list_messages(
     State(state): State<AppState>,
-    Extension(auth): Extension<AuthContext>,
+    auth: AuthContext,
     Path(channel_id): Path<Uuid>,
     Query(query): Query<ListMessagesQuery>,
 ) -> impl IntoResponse {
@@ -227,7 +227,7 @@ async fn list_messages(
 
 async fn send_message(
     State(state): State<AppState>,
-    Extension(auth): Extension<AuthContext>,
+    auth: AuthContext,
     Path(channel_id): Path<Uuid>,
     Json(req): Json<SendMessageRequest>,
 ) -> impl IntoResponse {
@@ -523,7 +523,7 @@ async fn fetch_reactions_by_message(
 
 async fn edit_message(
     State(state): State<AppState>,
-    Extension(auth): Extension<AuthContext>,
+    auth: AuthContext,
     Path(message_id): Path<Uuid>,
     Json(req): Json<EditMessageRequest>,
 ) -> impl IntoResponse {
@@ -587,7 +587,7 @@ async fn edit_message(
 
 async fn delete_message(
     State(state): State<AppState>,
-    Extension(auth): Extension<AuthContext>,
+    auth: AuthContext,
     Path(message_id): Path<Uuid>,
 ) -> impl IntoResponse {
     let row = sqlx::query(
@@ -642,7 +642,7 @@ async fn delete_message(
 
 async fn add_reaction(
     State(state): State<AppState>,
-    Extension(auth): Extension<AuthContext>,
+    auth: AuthContext,
     Path(message_id): Path<Uuid>,
     Json(req): Json<ReactionRequest>,
 ) -> impl IntoResponse {
@@ -686,7 +686,7 @@ async fn add_reaction(
 
 async fn remove_reaction(
     State(state): State<AppState>,
-    Extension(auth): Extension<AuthContext>,
+    auth: AuthContext,
     Path((message_id, emoji)): Path<(Uuid, String)>,
 ) -> impl IntoResponse {
     let emoji = emoji.trim().to_string();

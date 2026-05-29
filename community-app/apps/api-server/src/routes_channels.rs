@@ -5,7 +5,7 @@ use axum::{
     http::StatusCode,
     response::IntoResponse,
     routing::get,
-    Extension, Router,
+    Router,
 };
 use permissions::perms;
 use serde::{Deserialize, Serialize};
@@ -57,7 +57,7 @@ struct ChannelsResponse {
 
 async fn list_org_channels(
     State(state): State<AppState>,
-    Extension(auth): Extension<AuthContext>,
+    auth: AuthContext,
     Path(org_id): Path<Uuid>,
 ) -> impl IntoResponse {
     Span::current().record("organization_id", tracing::field::display(org_id));
@@ -104,7 +104,7 @@ async fn list_org_channels(
 
 async fn create_channel(
     State(state): State<AppState>,
-    Extension(auth): Extension<AuthContext>,
+    auth: AuthContext,
     Path(org_id): Path<Uuid>,
     Json(req): Json<CreateChannelRequest>,
 ) -> impl IntoResponse {
@@ -182,7 +182,7 @@ async fn create_channel(
 
 async fn get_channel(
     State(state): State<AppState>,
-    Extension(auth): Extension<AuthContext>,
+    auth: AuthContext,
     Path(channel_id): Path<Uuid>,
 ) -> impl IntoResponse {
     let row = sqlx::query(
@@ -229,7 +229,7 @@ async fn get_channel(
 
 async fn update_channel(
     State(state): State<AppState>,
-    Extension(auth): Extension<AuthContext>,
+    auth: AuthContext,
     Path(channel_id): Path<Uuid>,
     Json(req): Json<UpdateChannelRequest>,
 ) -> impl IntoResponse {
@@ -312,7 +312,7 @@ async fn update_channel(
 
 async fn delete_channel(
     State(state): State<AppState>,
-    Extension(auth): Extension<AuthContext>,
+    auth: AuthContext,
     Path(channel_id): Path<Uuid>,
 ) -> impl IntoResponse {
     let row = sqlx::query(

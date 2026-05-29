@@ -5,7 +5,7 @@ use axum::{
     http::StatusCode,
     response::IntoResponse,
     routing::{get, post},
-    Extension, Router,
+    Router,
 };
 use permissions::perms;
 use serde::{Deserialize, Serialize};
@@ -48,7 +48,7 @@ struct MediaRoomResponse {
 
 async fn create_media_room(
     State(state): State<AppState>,
-    Extension(auth): Extension<AuthContext>,
+    auth: AuthContext,
     Path(org_id): Path<Uuid>,
     Json(req): Json<CreateMediaRoomRequest>,
 ) -> impl IntoResponse {
@@ -129,7 +129,7 @@ async fn create_media_room(
 
 async fn get_media_room(
     State(state): State<AppState>,
-    Extension(auth): Extension<AuthContext>,
+    auth: AuthContext,
     Path(room_id): Path<Uuid>,
 ) -> impl IntoResponse {
     let Some(room) = (match media::get_media_room(&state.pool, room_id).await {
@@ -179,7 +179,7 @@ struct IssueTokenRequest {
 
 async fn issue_token(
     State(state): State<AppState>,
-    Extension(auth): Extension<AuthContext>,
+    auth: AuthContext,
     Path(room_id): Path<Uuid>,
     Json(req): Json<IssueTokenRequest>,
 ) -> impl IntoResponse {
@@ -256,7 +256,7 @@ async fn issue_token(
 
 async fn list_participants(
     State(state): State<AppState>,
-    Extension(auth): Extension<AuthContext>,
+    auth: AuthContext,
     Path(room_id): Path<Uuid>,
 ) -> impl IntoResponse {
     let Some(room) = (match media::get_media_room(&state.pool, room_id).await {
@@ -304,7 +304,7 @@ struct JoinRoomRequest {
 
 async fn join_room(
     State(state): State<AppState>,
-    Extension(auth): Extension<AuthContext>,
+    auth: AuthContext,
     Path(room_id): Path<Uuid>,
     Json(req): Json<JoinRoomRequest>,
 ) -> impl IntoResponse {
@@ -445,7 +445,7 @@ async fn join_room(
 
 async fn get_session_status(
     State(state): State<AppState>,
-    Extension(auth): Extension<AuthContext>,
+    auth: AuthContext,
     Path(session_id): Path<Uuid>,
 ) -> impl IntoResponse {
     let Some(status) = (match media::get_session_status(&state.pool, session_id).await {
@@ -475,7 +475,7 @@ struct HeartbeatBody {
 
 async fn heartbeat(
     State(state): State<AppState>,
-    Extension(auth): Extension<AuthContext>,
+    auth: AuthContext,
     Path(session_id): Path<Uuid>,
     body: Option<Json<HeartbeatBody>>,
 ) -> impl IntoResponse {
@@ -566,7 +566,7 @@ struct LeaveBody {
 
 async fn leave(
     State(state): State<AppState>,
-    Extension(auth): Extension<AuthContext>,
+    auth: AuthContext,
     Path(session_id): Path<Uuid>,
     body: Option<Json<LeaveBody>>,
 ) -> impl IntoResponse {

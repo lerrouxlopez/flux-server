@@ -5,7 +5,7 @@ use axum::{
     http::{header, HeaderValue, StatusCode},
     response::{IntoResponse, Response},
     routing::get,
-    Extension, Router,
+    Router,
 };
 use sqlx::Row;
 use uuid::Uuid;
@@ -19,7 +19,7 @@ pub fn router() -> Router<AppState> {
 
 pub async fn download_attachment(
     State(state): State<AppState>,
-    Extension(auth): Extension<AuthContext>,
+    auth: AuthContext,
     Path(attachment_id): Path<Uuid>,
 ) -> impl IntoResponse {
     // Look up attachment + owning channel/org via message join.
