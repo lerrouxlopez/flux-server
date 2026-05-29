@@ -43,6 +43,8 @@ jobs:
           file: community-app/Dockerfile.api-server
           push: true
           tags: ${{ env.IMAGE_API }}:latest
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
 
       - name: Build and push (realtime-gateway)
         uses: docker/build-push-action@v6
@@ -51,6 +53,8 @@ jobs:
           file: community-app/Dockerfile.realtime-gateway
           push: true
           tags: ${{ env.IMAGE_REALTIME }}:latest
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
 
       - name: Build and push (worker)
         uses: docker/build-push-action@v6
@@ -59,6 +63,8 @@ jobs:
           file: community-app/Dockerfile.worker
           push: true
           tags: ${{ env.IMAGE_WORKER }}:latest
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
 
       - name: Build and push (web)
         uses: docker/build-push-action@v6
@@ -71,6 +77,8 @@ jobs:
           tags: ${{ env.IMAGE_WEB }}:latest
           build-args: |
             VITE_BACKEND_ORIGIN=${{ secrets.FLUX_BACKEND_ORIGIN || 'https://fluxserver.kineticapp.online' }}
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
 
       - name: Deploy on server
         uses: appleboy/ssh-action@v1.0.3

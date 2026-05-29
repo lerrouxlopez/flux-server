@@ -17,8 +17,7 @@ RUN set -eux; \
     command -v npx || true; \
     (npx --version || true); \
     ls -la node_modules/.bin | head -n 50; \
-    node ./node_modules/typescript/bin/tsc -b; \
-    node ./node_modules/vite/bin/vite.js build
+    npm run build
 
 FROM nginx:1.27-alpine
 COPY --from=builder /app/apps/web/dist /usr/share/nginx/html
