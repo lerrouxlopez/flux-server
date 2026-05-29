@@ -7,7 +7,7 @@ import { OrganizationGalleryPage } from "./OrganizationGalleryPage";
 import { ExperienceContext, type ExperienceContextValue } from "../../experience/ExperienceProvider";
 import { useAuthStore } from "../../../state/auth";
 
-const apiFetchMock = vi.fn(async (_path: string) => ({}));
+const apiFetchMock = vi.fn(async (_path: string, _init?: any) => ({}));
 vi.mock("../../../api/client", () => {
   return {
     apiFetch: (path: string, init?: any) => apiFetchMock(path, init),
@@ -33,6 +33,8 @@ function renderPage(ctx: Partial<ExperienceContextValue> = {}) {
       auto_subscribe: true,
     },
     featureFlags: {},
+    previewBranding: () => {},
+    themeId: "default",
     isLoading: false,
     error: null,
     setMode: () => {},
@@ -89,4 +91,3 @@ describe("OrganizationGalleryPage", () => {
     expect(screen.getByLabelText("Invite code")).toBeInTheDocument();
   });
 });
-

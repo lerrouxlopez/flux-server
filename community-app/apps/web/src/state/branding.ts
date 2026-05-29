@@ -1,5 +1,6 @@
 import { create } from "zustand";
-import { getThemePreset, type UIMode } from "../branding/presets";
+import { getThemePreset } from "../branding/presets";
+import { apiFetch } from "../api/client";
 
 const BACKEND_ORIGIN = (import.meta as any).env?.VITE_BACKEND_ORIGIN as string | undefined;
 
@@ -42,7 +43,6 @@ export const useBrandingStore = create<BrandingState>((set) => ({
   branding: null,
   setBranding: (branding) => {
     set({ branding });
-    applyBrandingToDom(branding);
   },
   loadBranding: async (host) => {
     const url = `${BACKEND_ORIGIN ?? ""}/public/branding?host=${encodeURIComponent(host)}`;
@@ -53,51 +53,51 @@ export const useBrandingStore = create<BrandingState>((set) => ({
     }
     const data = (await res.json()) as PublicBranding;
     set({ branding: data });
-    applyBrandingToDom(data);
   },
   loadOrgBranding: async (orgId) => {
-    const token = localStorage.getItem("access_token");
     const url = `${BACKEND_ORIGIN ?? ""}/orgs/${orgId}/branding`;
-    const res = await fetch(url, {
-      headers: token ? { Authorization: `Bearer ${token}` } : undefined,
-    });
-    if (!res.ok) return;
-    const data = (await res.json()) as PublicBranding;
+    const data = await apiFetch<PublicBranding>(url);
     set({ branding: data });
-    applyBrandingToDom(data);
   },
 }));
 
 export function applyBrandingToDom(
   data: PublicBranding | null,
-  opts?: { uiMode?: UIMode; uiTheme?: string | undefined },
+  opts?: { themeId?: string },
 ) {
   const root = document.documentElement;
-  // Branded variables (used by CSS skin overrides).
   root.classList.add("branded");
-  const preset = getThemePreset(opts?.uiMode ?? data?.ui_mode, opts?.uiTheme ?? data?.ui_theme);
-  root.dataset.uiMode = preset.mode;
+
+  // Priority: user preference (themeId) > org suggestion (data.ui_theme) > default
+  const preset = getThemePreset(opts?.themeId ?? data?.ui_theme ?? undefined);
+
+  // When a user theme is explicitly requested, use preset palette exclusively.
+  // Org's saved custom colors only apply when no user preference is active (org-level branding).
+  const c = opts?.themeId ? null : data;
+
+  // uiMode is intentionally NOT set here — ExperienceProvider owns data-ui-mode.
   root.dataset.uiTheme = preset.id;
   root.dataset.colorScheme = preset.colorScheme;
 
-  const brandPrimary = data?.primary_color ?? preset.vars.brandPrimary;
-  const brandSecondary = data?.secondary_color ?? preset.vars.brandSecondary;
+  const brandPrimary = c?.primary_color ?? preset.vars.brandPrimary;
+  const brandSecondary = c?.secondary_color ?? preset.vars.brandSecondary;
   root.style.setProperty("--brand-primary", brandPrimary);
   root.style.setProperty("--brand-secondary", brandSecondary);
+  root.style.setProperty("--flux-on-accent", preset.vars.onPrimary);
 
-  root.style.setProperty("--app-bg", data?.bg_color ?? preset.vars.appBg);
-  root.style.setProperty("--app-surface", data?.surface_color ?? preset.vars.appSurface);
-  root.style.setProperty("--app-text", data?.text_color ?? preset.vars.appText);
-  root.style.setProperty("--app-muted", data?.muted_color ?? preset.vars.appMuted);
-  root.style.setProperty("--app-border", data?.border_color ?? preset.vars.appBorder);
+  root.style.setProperty("--app-bg", c?.bg_color ?? preset.vars.appBg);
+  root.style.setProperty("--app-surface", c?.surface_color ?? preset.vars.appSurface);
+  root.style.setProperty("--app-text", c?.text_color ?? preset.vars.appText);
+  root.style.setProperty("--app-muted", c?.muted_color ?? preset.vars.appMuted);
+  root.style.setProperty("--app-border", c?.border_color ?? preset.vars.appBorder);
 
   // Extra UI tokens
-  root.style.setProperty("--selection-bg", data?.selection_bg ?? brandPrimary);
-  root.style.setProperty("--selection-text", data?.selection_text ?? preset.vars.appText);
-  root.style.setProperty("--dropdown-bg", data?.dropdown_bg ?? (data?.surface_color ?? preset.vars.appSurface));
-  root.style.setProperty("--dropdown-text", data?.dropdown_text ?? (data?.text_color ?? preset.vars.appText));
-  root.style.setProperty("--chat-bubble-me-bg", data?.chat_bubble_me_bg ?? brandPrimary);
-  root.style.setProperty("--chat-bubble-me-text", data?.chat_bubble_me_text ?? "#ffffff");
-  root.style.setProperty("--chat-bubble-other-bg", data?.chat_bubble_other_bg ?? (data?.surface_color ?? preset.vars.appSurface));
-  root.style.setProperty("--chat-bubble-other-text", data?.chat_bubble_other_text ?? (data?.text_color ?? preset.vars.appText));
+  root.style.setProperty("--selection-bg", c?.selection_bg ?? brandPrimary);
+  root.style.setProperty("--selection-text", c?.selection_text ?? preset.vars.appText);
+  root.style.setProperty("--dropdown-bg", c?.dropdown_bg ?? (c?.surface_color ?? preset.vars.appSurface));
+  root.style.setProperty("--dropdown-text", c?.dropdown_text ?? (c?.text_color ?? preset.vars.appText));
+  root.style.setProperty("--chat-bubble-me-bg", c?.chat_bubble_me_bg ?? brandPrimary);
+  root.style.setProperty("--chat-bubble-me-text", c?.chat_bubble_me_text ?? preset.vars.onPrimary);
+  root.style.setProperty("--chat-bubble-other-bg", c?.chat_bubble_other_bg ?? (c?.surface_color ?? preset.vars.appSurface));
+  root.style.setProperty("--chat-bubble-other-text", c?.chat_bubble_other_text ?? (c?.text_color ?? preset.vars.appText));
 }

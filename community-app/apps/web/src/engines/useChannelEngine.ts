@@ -20,6 +20,8 @@ import { createRealtimeClient } from "../realtime/ws";
 import { useAuthStore } from "../state/auth";
 import { useBrandingStore } from "../state/branding";
 import { useExperience } from "../features/experience/useExperience";
+import { useToastStore } from "../state/toasts";
+import { playFriendlyBlip } from "../util/notifications";
 
 type PresenceStatus = "online" | "offline";
 
@@ -33,6 +35,7 @@ export function useChannelEngine() {
   const meId = me?.id ?? null;
   const loadOrgBranding = useBrandingStore((s) => s.loadOrgBranding);
   const uiMode = useExperience().rawMode;
+  const pushToast = useToastStore((s) => s.push);
 
   const [text, setText] = useState("");
   const [connected, setConnected] = useState(false);
@@ -54,6 +57,10 @@ export function useChannelEngine() {
   const [activeThreadId, setActiveThreadId] = useState<string | null>(null);
   const [threadDraft, setThreadDraft] = useState("");
   const [newThreadDraft, setNewThreadDraft] = useState("");
+  const uiStateRef = useRef<{ workPane: string | null; activeThreadId: string | null }>({ workPane: null, activeThreadId: null });
+  useEffect(() => {
+    uiStateRef.current = { workPane, activeThreadId };
+  }, [workPane, activeThreadId]);
 
   const QUICK_REACTIONS = useMemo(
     () => ["\u{1F44D}", "\u{2764}\u{FE0F}", "\u{1F602}", "\u{1F62E}", "\u{1F622}", "\u{1F621}"],
@@ -184,6 +191,13 @@ export function useChannelEngine() {
                   : existing;
               return { ...(prev ?? {}), messages: [msg, ...filtered] };
             });
+            if (!me?.id || msg.sender_id !== me.id) {
+              pushToast({
+                title: "New message",
+                message: msg.body ?? "(attachment)",
+              });
+              playFriendlyBlip();
+            }
           } else {
             qc.invalidateQueries({ queryKey: ["messages", channel_id] });
           }
@@ -215,6 +229,14 @@ export function useChannelEngine() {
         if (e?.type === "thread.reply.created" && e.channel_id === channel_id) {
           qc.invalidateQueries({ queryKey: ["threads", channel_id] });
           qc.invalidateQueries({ queryKey: ["thread", String(e.thread_id ?? "")] });
+          const current = uiStateRef.current;
+          if (!(current.workPane === "threads" && current.activeThreadId && current.activeThreadId === String(e.thread_id ?? ""))) {
+            pushToast({
+              title: "New thread reply",
+              message: "A thread has a new reply.",
+            });
+            playFriendlyBlip();
+          }
           return;
         }
         if (e?.type === "channel.pins.changed" && e.channel_id === channel_id) {
@@ -429,6 +451,22 @@ export function useChannelEngine() {
     staleTime: 2_000,
   });
 
+  // Thread counts for main timeline rendering (reply counter under root messages).
+  const threadIndex = useQuery({
+    enabled: !!channel_id && uiMode === "work",
+    queryKey: ["thread-index", channel_id],
+    queryFn: () => apiFetch<ThreadsListResponse>(`/channels/${channel_id}/threads`),
+    staleTime: 5_000,
+  });
+
+  const threadMetaByRootId = useMemo(() => {
+    const map = new Map<string, { threadId: string; replyCount: number }>();
+    for (const t of threadIndex.data?.threads ?? []) {
+      map.set(String(t.thread.root_message_id), { threadId: String(t.thread.id), replyCount: Number(t.reply_count ?? 0) });
+    }
+    return map;
+  }, [threadIndex.data]);
+
   const thread = useQuery({
     enabled: !!activeThreadId,
     queryKey: ["thread", activeThreadId],
@@ -584,6 +622,8 @@ export function useChannelEngine() {
     pins,
     pinnedIds,
     threads,
+    threadIndex,
+    threadMetaByRootId,
     thread,
     createThread,
     replyToThread,

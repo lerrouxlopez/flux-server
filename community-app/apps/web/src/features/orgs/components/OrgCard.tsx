@@ -3,6 +3,15 @@ import type { DiscoverOrg } from "../../../api/types";
 import { Button } from "../../../components/Button";
 import { OrgVisibilityBadge } from "./OrgVisibilityBadge";
 
+function orgInitials(name: string): string {
+  const v = name.trim();
+  if (!v) return "?";
+  const parts = v.split(/\s+/).filter(Boolean);
+  const a = parts[0]?.[0] ?? "?";
+  const b = parts.length > 1 ? parts[parts.length - 1]?.[0] ?? "" : v[1] ?? "";
+  return (a + b).toUpperCase();
+}
+
 export type OrgCardAction =
   | { kind: "open"; href: string }
   | { kind: "join_open"; orgId: string }
@@ -32,24 +41,40 @@ export function OrgCard(props: {
 
   const bodyText = (org.description ?? "").trim();
   const showMeta = props.density === "comfortable";
+  const showDetails = !!bodyText;
 
   return (
     <div className="rounded-xl border border-slate-800 bg-slate-900/30 p-4">
       <div className="flex items-start justify-between gap-3">
-        <div className="min-w-0">
-          <div className="flex flex-wrap items-center gap-2">
-            <div className="truncate text-sm font-semibold text-slate-100">{org.name}</div>
-            <OrgVisibilityBadge policy={org.join_policy} />
-            {org.current_user_status === "rejected" ? (
-              <span className="inline-flex items-center rounded-md border border-slate-800 bg-slate-950/20 px-2 py-0.5 text-xs font-semibold text-slate-200">
-                Rejected
-              </span>
+        <div className="flex min-w-0 gap-3">
+          <div className="shrink-0">
+            {org.avatar_url ? (
+              <img
+                alt={`${org.name} logo`}
+                className="h-10 w-10 rounded-lg border border-slate-800 bg-slate-950/30 object-cover"
+                src={org.avatar_url}
+              />
+            ) : (
+              <div className="grid h-10 w-10 place-items-center rounded-lg border border-slate-800 bg-slate-950/30 text-xs font-semibold text-slate-200">
+                {orgInitials(org.name)}
+              </div>
+            )}
+          </div>
+          <div className="min-w-0">
+            <div className="flex flex-wrap items-center gap-2">
+              <div className="truncate text-sm font-semibold text-slate-100">{org.name}</div>
+              <OrgVisibilityBadge policy={org.join_policy} />
+              {org.current_user_status === "rejected" ? (
+                <span className="inline-flex items-center rounded-md border border-slate-800 bg-slate-950/20 px-2 py-0.5 text-xs font-semibold text-slate-200">
+                  Rejected
+                </span>
+              ) : null}
+            </div>
+            <div className="mt-0.5 text-xs text-slate-400">/{org.slug}</div>
+            {showDetails ? (
+              <div className={`mt-2 text-sm text-slate-300 ${showMeta ? "line-clamp-2" : "line-clamp-1"}`}>{bodyText}</div>
             ) : null}
           </div>
-          <div className="mt-0.5 text-xs text-slate-400">/{org.slug}</div>
-          {showMeta && bodyText ? (
-            <div className="mt-2 line-clamp-2 text-sm text-slate-300">{bodyText}</div>
-          ) : null}
         </div>
 
         <div className="shrink-0">
@@ -86,4 +111,3 @@ export function OrgCard(props: {
     </div>
   );
 }
-

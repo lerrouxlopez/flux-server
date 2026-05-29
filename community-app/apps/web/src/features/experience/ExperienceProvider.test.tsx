@@ -6,7 +6,7 @@ import { ExperienceProvider } from "./ExperienceProvider";
 import { useExperience } from "./useExperience";
 import { useAuthStore } from "../../state/auth";
 
-const apiFetchMock = vi.fn(async (_path: string) => ({}));
+const apiFetchMock = vi.fn(async (_path: string, _init?: any) => ({}));
 vi.mock("../../api/client", () => {
   return {
     apiFetch: (path: string, init?: any) => apiFetchMock(path, init),

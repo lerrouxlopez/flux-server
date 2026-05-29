@@ -6,7 +6,7 @@ import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { AdminAccessPage } from "./AdminAccessPage";
 import { ExperienceContext, type ExperienceContextValue } from "../features/experience/ExperienceProvider";
 
-const apiFetchMock = vi.fn(async (_path: string) => ({}));
+const apiFetchMock = vi.fn(async (_path: string, _init?: any) => ({}));
 vi.mock("../api/client", () => {
   return {
     apiFetch: (path: string, init?: any) => apiFetchMock(path, init),
@@ -37,6 +37,8 @@ function renderPage(ctx: Partial<ExperienceContextValue> = {}) {
       auto_subscribe: true,
     },
     featureFlags: {},
+    previewBranding: () => {},
+    themeId: "default",
     isLoading: false,
     error: null,
     setMode: () => {},
@@ -78,7 +80,7 @@ describe("AdminAccessPage", () => {
     renderPage();
 
     expect(await screen.findByText("Discovery settings")).toBeInTheDocument();
-    expect(screen.getByLabelText("Join policy")).toBeInTheDocument();
+    expect(await screen.findByLabelText("Join policy")).toBeInTheDocument();
     expect(screen.getByText("Public gallery preview")).toBeInTheDocument();
     expect(screen.getByText("Join requests")).toBeInTheDocument();
   });
@@ -107,6 +109,7 @@ describe("AdminAccessPage", () => {
     renderPage();
 
     await screen.findByText("Discovery settings");
+    await screen.findByText("Discoverable in public gallery");
     await user.click(screen.getByText("Discoverable in public gallery"));
     await user.click(screen.getByText("Save changes"));
 
@@ -116,4 +119,3 @@ describe("AdminAccessPage", () => {
     );
   });
 });
-

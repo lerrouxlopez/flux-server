@@ -1,8 +1,13 @@
+import { useEffect, useRef } from "react";
+import type { RefObject } from "react";
 import { TextArea } from "../../../components/TextArea";
 import type { ChannelEngine } from "../../../engines/useChannelEngine";
 
+const EMOJI_PALETTE = ["😀", "😂", "❤️", "👍", "🎉", "🙏", "🔥", "😮", "😢", "😡", "✅", "👀"];
+
 export function Composer(props: { e: ChannelEngine; density: "comfortable" | "compact"; className?: string }) {
   const { e } = props;
+  const emojiPopupRef = useRef<HTMLDivElement | null>(null);
   return (
     <form className={props.className ?? ""} onSubmit={e.onSubmit} aria-label="Message composer">
       <div className="flux-focus-within flex items-end gap-2 rounded-xl border border-slate-800 bg-slate-950/30 px-3 py-2">
@@ -35,6 +40,44 @@ export function Composer(props: { e: ChannelEngine; density: "comfortable" | "co
         >
           {"\u{1F4CE}"}
         </button>
+        <div className="relative">
+          <button
+            aria-label="Emoji"
+            className={`grid h-9 w-9 place-items-center rounded-md text-sm ${
+              e.emojiOpen ? "bg-slate-800 text-white" : "text-slate-300 hover:bg-slate-800/60 hover:text-slate-100"
+            }`}
+            onClick={() => e.setEmojiOpen((v) => !v)}
+            type="button"
+            title="Emoji"
+          >
+            {"\u{1F60A}"}
+          </button>
+
+          {e.emojiOpen ? (
+            <div
+              ref={emojiPopupRef}
+              className="absolute bottom-full right-0 z-30 mb-2 w-[260px] rounded-xl border border-slate-800 bg-slate-950/95 p-2 shadow-xl backdrop-blur"
+              aria-label="Emoji picker"
+            >
+              <div className="grid grid-cols-6 gap-1">
+                {EMOJI_PALETTE.map((emoji) => (
+                  <button
+                    key={emoji}
+                    className="grid h-9 w-9 place-items-center rounded-md text-base hover:bg-slate-800/60"
+                    onClick={() => {
+                      e.setText((t) => (t ? t + " " + emoji : emoji));
+                      e.setEmojiOpen(false);
+                    }}
+                    type="button"
+                    title={emoji}
+                  >
+                    {emoji}
+                  </button>
+                ))}
+              </div>
+            </div>
+          ) : null}
+        </div>
         <div className="mx-1 h-6 w-px bg-slate-800" />
         <button
           aria-label="Send message"
@@ -48,6 +91,8 @@ export function Composer(props: { e: ChannelEngine; density: "comfortable" | "co
           {"\u{27A4}"}
         </button>
       </div>
+
+      <CloseEmojiPopup e={e} popupRef={emojiPopupRef} />
 
       <input
         accept="image/*,application/pdf,text/plain"
@@ -83,3 +128,27 @@ export function Composer(props: { e: ChannelEngine; density: "comfortable" | "co
   );
 }
 
+function CloseEmojiPopup(props: { e: ChannelEngine; popupRef: RefObject<HTMLDivElement | null> }) {
+  const { e, popupRef } = props;
+
+  useEffect(() => {
+    if (!e.emojiOpen) return;
+    function onDown(ev: MouseEvent) {
+      const el = popupRef.current;
+      if (!el) return;
+      if (ev.target instanceof Node && el.contains(ev.target)) return;
+      e.setEmojiOpen(false);
+    }
+    function onKey(ev: KeyboardEvent) {
+      if (ev.key === "Escape") e.setEmojiOpen(false);
+    }
+    document.addEventListener("mousedown", onDown);
+    document.addEventListener("keydown", onKey);
+    return () => {
+      document.removeEventListener("mousedown", onDown);
+      document.removeEventListener("keydown", onKey);
+    };
+  }, [e.emojiOpen, e.setEmojiOpen, popupRef]);
+
+  return null;
+}

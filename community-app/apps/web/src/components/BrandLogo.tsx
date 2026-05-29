@@ -1,4 +1,5 @@
 import { useBrandingStore } from "../state/branding";
+import defaultLogo from "../assets/fluxNexus.png";
 
 function FluxMark(props: { height: number }) {
   const h = props.height;
@@ -34,18 +35,30 @@ function FluxMark(props: { height: number }) {
   );
 }
 
-export function BrandLogo(props: { className?: string; height?: number; showText?: boolean }) {
+export function BrandLogo(props: {
+  className?: string;
+  height?: number;
+  width?: number;
+  showText?: boolean;
+  square?: boolean;
+}) {
   const branding = useBrandingStore((s) => s.branding);
   const height = props.height ?? 36;
+  const width = props.width;
+  const square = props.square ?? false;
 
   const alt = branding?.app_name ?? "Flux";
+
+  const imgStyle = square
+    ? { height, width: height, objectFit: "contain" as const }
+    : { height, width: width ?? "auto", objectFit: "contain" as const };
 
   return (
     <div className={props.className ?? ""} style={{ display: "flex", alignItems: "center", gap: 10 }}>
       {branding?.logo_url ? (
-        <img src={branding.logo_url} alt={alt} style={{ height, width: "auto" }} />
+        <img src={branding.logo_url} alt={alt} style={imgStyle} />
       ) : (
-        <FluxMark height={height} />
+        <img src={defaultLogo} alt={alt} style={imgStyle} />
       )}
       {props.showText ? <span className="font-semibold tracking-tight">{branding?.app_name ?? "Flux"}</span> : null}
     </div>

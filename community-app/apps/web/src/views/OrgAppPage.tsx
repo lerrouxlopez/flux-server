@@ -37,6 +37,17 @@ export function OrgAppPage() {
     queryFn: () => apiFetch<ChannelsResponse>(`/orgs/${org!.id}/channels`),
   });
 
+  // Default to #general when opening an org.
+  useEffect(() => {
+    if (!org?.slug) return;
+    if (channels.isLoading || channels.isError) return;
+    const list = channels.data?.channels ?? [];
+    if (!list.length) return;
+    const general = list.find((c) => c.name === "general") ?? list[0];
+    if (!general?.id) return;
+    nav(`/app/${org.slug}/channels/${general.id}`, { replace: true });
+  }, [channels.data, channels.isError, channels.isLoading, nav, org?.slug]);
+
   const createChannel = useMutation({
     mutationFn: async () =>
       apiFetch<Channel>(`/orgs/${org!.id}/channels`, {
@@ -69,9 +80,6 @@ export function OrgAppPage() {
       <section className="rounded-xl border border-slate-800 bg-slate-900/30 p-4">
         <div className="flex items-center justify-between gap-2">
           <div className="text-lg font-semibold">Client</div>
-          <Link className="flux-link text-sm" to={`/app/${org.slug}/settings/notifications`}>
-            Notifications
-          </Link>
         </div>
         <div className="mt-4 flex flex-wrap gap-2">
           {(channels.data?.channels ?? []).length ? (

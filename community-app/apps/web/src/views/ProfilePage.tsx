@@ -6,6 +6,7 @@ import { Input } from "../components/Input";
 import { Button } from "../components/Button";
 import { Avatar } from "../components/Avatar";
 import { useExperience } from "../features/experience/useExperience";
+import { THEME_PRESETS } from "../branding/presets";
 
 export function ProfilePage() {
   const user = useAuthStore((s) => s.user);
@@ -52,11 +53,7 @@ export function ProfilePage() {
       <div className="text-xl font-semibold">Profile</div>
       <div className="mt-4 rounded-xl border border-slate-800 bg-slate-900/30 p-4">
         <div className="flex items-center gap-4">
-          <Avatar
-            name={displayName.trim() || user.display_name}
-            size={56}
-            src={avatarDataUrl ?? user.avatar_url ?? null}
-          />
+          <Avatar name={displayName.trim() || user.display_name} size={56} src={avatarDataUrl ?? user.avatar_url ?? null} />
           <div className="min-w-0">
             <div className="text-sm font-semibold text-slate-100">{user.email}</div>
             <div className="mt-1 text-xs text-slate-400">Update your name, display name, and avatar.</div>
@@ -93,26 +90,17 @@ export function ProfilePage() {
             }}
             type="file"
           />
-          {avatarDataUrl ? (
-            <div className="mt-2 flex gap-2">
-              <Button className="bg-slate-800 hover:bg-slate-700" onClick={() => setAvatarDataUrl(null)} type="button">
-                Clear
-              </Button>
-            </div>
-          ) : null}
-        </div>
-
-        <div className="mt-4 flex items-center gap-3">
-          <Button
-            className="bg-indigo-600 hover:bg-indigo-500"
-            disabled={!canSave || saveProfile.isPending}
-            onClick={() => saveProfile.mutate()}
-            type="button"
-          >
-            {saveProfile.isPending ? "Saving..." : "Save"}
-          </Button>
-          {err ? <div className="text-sm text-red-400">{err}</div> : null}
-          {!err && saveProfile.isSuccess ? <div className="text-sm text-emerald-400">Saved.</div> : null}
+          <div className="mt-2">
+            <Button
+              className="bg-indigo-600 hover:bg-indigo-500"
+              disabled={!canSave || saveProfile.isPending}
+              onClick={() => saveProfile.mutate()}
+              type="button"
+            >
+              {saveProfile.isPending ? "Saving…" : "Save profile"}
+            </Button>
+          </div>
+          {err ? <div className="mt-2 text-sm text-red-400">{err}</div> : null}
         </div>
       </div>
 
@@ -161,12 +149,53 @@ export function ProfilePage() {
         </div>
 
         {experience.error ? <div className="mt-3 text-sm text-red-400">{experience.error}</div> : null}
-        {experience.isLoading ? <div className="mt-2 text-xs text-slate-400">Updatingâ€¦</div> : null}
+        {experience.isLoading ? <div className="mt-2 text-xs text-slate-400">Updating…</div> : null}
         {!experience.error ? (
           <div className="mt-2 text-xs text-slate-500">
             Resolution source: <span className="font-mono">{experience.source}</span>
           </div>
         ) : null}
+      </div>
+
+      <div className="mt-4 rounded-xl border border-slate-800 bg-slate-900/30 p-4">
+        <div className="text-sm font-semibold text-slate-100">Personal Theme</div>
+        <div className="mt-1 text-xs text-slate-400">
+          Applies on global pages (org gallery, login, profile). Each organization controls its own theme when you're active in it.
+        </div>
+
+        <div className="mt-3 grid grid-cols-2 gap-2 sm:grid-cols-3">
+          {THEME_PRESETS.map((preset) => {
+            const active = experience.userThemeId === preset.id;
+            return (
+              <button
+                key={preset.id}
+                type="button"
+                aria-pressed={active}
+                onClick={() => experience.setUserTheme(preset.id)}
+                className={`flex items-center gap-2 rounded-lg border px-3 py-2 text-left transition-colors ${
+                  active
+                    ? "border-indigo-500 bg-indigo-950/40 text-slate-100"
+                    : "border-slate-800 bg-slate-950/20 text-slate-300 hover:border-slate-700 hover:bg-slate-900/40"
+                }`}
+              >
+                <span className="flex shrink-0 gap-0.5">
+                  <span
+                    className="block h-4 w-2 rounded-l-sm"
+                    style={{ backgroundColor: preset.vars.appBg }}
+                  />
+                  <span
+                    className="block h-4 w-2 rounded-r-sm"
+                    style={{ backgroundColor: preset.vars.brandPrimary }}
+                  />
+                </span>
+                <span className="min-w-0">
+                  <span className="block truncate text-xs font-semibold leading-tight">{preset.label}</span>
+                  <span className="block text-[10px] leading-tight text-slate-500">{preset.colorScheme}</span>
+                </span>
+              </button>
+            );
+          })}
+        </div>
       </div>
     </div>
   );

@@ -16,6 +16,7 @@ export function MessageItem(props: {
   const senderName = e.memberById.get(m.sender_id)?.display_name ?? m.sender_id.slice(0, 8);
   const isPinned = e.pinnedIds.has(m.id);
   const threadId = m.thread_id ?? null;
+  const threadMeta = e.threadMetaByRootId?.get(m.id) ?? null;
 
   return (
     <div className={`group flex ${isMe ? "justify-end" : "justify-start"}`}>
@@ -65,10 +66,23 @@ export function MessageItem(props: {
             </div>
           </div>
 
+          {threadMeta && threadMeta.replyCount > 0 ? (
+            <button
+              className={`mt-1 text-[11px] text-slate-400 hover:text-slate-200 ${isMe ? "ml-auto block text-right" : "mr-auto block text-left"}`}
+              onClick={() => {
+                e.setWorkPane("threads");
+                e.setActiveThreadId(threadMeta.threadId);
+              }}
+              type="button"
+              title="Open thread"
+            >
+              {threadMeta.replyCount} {threadMeta.replyCount === 1 ? "reply" : "replies"}
+            </button>
+          ) : null}
+
           <ReactionBar e={e} messageId={m.id} reactions={m.reactions ?? []} align={isMe ? "end" : "start"} />
         </div>
       </div>
     </div>
   );
 }
-

@@ -111,11 +111,12 @@ describe("Shells", () => {
   it("WorkShell shows search/pins/threads + meeting control and comfortable density", () => {
     renderWithProviders(<WorkShell e={fakeEngine()} />);
     expect(screen.getByTestId("work-shell")).toBeInTheDocument();
-    expect(screen.getByText("Search")).toBeInTheDocument();
-    expect(screen.getByText("Pins")).toBeInTheDocument();
-    expect(screen.getByText("Threads")).toBeInTheDocument();
+    expect(screen.getByPlaceholderText("Search channels and chats...")).toBeInTheDocument();
+    expect(screen.getByRole("link", { name: "Channels" })).toBeInTheDocument();
+    expect(screen.getAllByText("Chats").length).toBeGreaterThan(0);
+    expect(screen.getAllByText("Members").length).toBeGreaterThan(0);
     expect(screen.getByTestId("meeting-control")).toBeInTheDocument();
-    expect(screen.getByText("Start meeting")).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Start meeting" })).toBeInTheDocument();
   });
 
   it("GameShell shows compact density and reactions control", () => {

@@ -10,12 +10,15 @@ import { useQuery } from "@tanstack/react-query";
 import { apiFetch } from "../api/client";
 import type { MembersResponse, OrgsListResponse } from "../api/types";
 import { ExperienceProvider } from "../features/experience/ExperienceProvider";
+import { ToastViewport } from "./ToastViewport";
+import { useRef } from "react";
 
 export function AppShell() {
   const user = useAuthStore((s) => s.user);
   const logout = useAuthStore((s) => s.logout);
   const loadMe = useAuthStore((s) => s.loadMe);
   const [menuOpen, setMenuOpen] = useState(false);
+  const menuRef = useRef<HTMLDivElement | null>(null);
   const nav = useNavigate();
   const loc = useLocation();
 
@@ -31,28 +34,55 @@ export function AppShell() {
     staleTime: 30_000,
   });
 
-  const fallbackOrgId = orgs.data?.organizations?.[0]?.id ?? null;
+  const fallbackOrg = orgs.data?.organizations?.[0] ?? null;
+  const fallbackOrgId = fallbackOrg?.id ?? null;
   const currentOrg = currentOrgSlug ? orgs.data?.organizations.find((o) => o.slug === currentOrgSlug) ?? null : null;
 
-  const currentChannelId = (() => {
-    const m = loc.pathname.match(/^\/app\/[^/]+\/channels\/([^/]+)/);
-    return m?.[1] ?? null;
-  })();
+  const orgForAdmin = currentOrg ?? fallbackOrg;
+  const orgForAdminSlug = orgForAdmin?.slug ?? null;
+  const orgForAdminId = orgForAdmin?.id ?? null;
 
   const members = useQuery({
-    enabled: !!user && !!currentOrg?.id,
-    queryKey: ["members", currentOrg?.id],
-    queryFn: () => apiFetch<MembersResponse>(`/orgs/${currentOrg!.id}/members`),
+    enabled: !!user && !!orgForAdminId,
+    queryKey: ["members", orgForAdminId],
+    queryFn: () => apiFetch<MembersResponse>(`/orgs/${orgForAdminId}/members`),
     staleTime: 10_000,
   });
 
   const myRole = members.data?.members.find((m) => m.user_id === user?.id)?.role ?? null;
   const canSeeAdmin = myRole === "owner" || myRole === "admin";
 
+  const currentChannelId = (() => {
+    const m = loc.pathname.match(/^\/app\/[^/]+\/channels\/([^/]+)/);
+    return m?.[1] ?? null;
+  })();
+
   useEffect(() => {
     // Keep user populated when reloading pages.
     loadMe().catch(() => {});
   }, [loadMe]);
+
+  useEffect(() => {
+    if (!menuOpen) return;
+    const onDown = (ev: MouseEvent | TouchEvent) => {
+      const el = menuRef.current;
+      if (!el) return;
+      const target = ev.target as Node | null;
+      if (target && el.contains(target)) return;
+      setMenuOpen(false);
+    };
+    const onKey = (ev: KeyboardEvent) => {
+      if (ev.key === "Escape") setMenuOpen(false);
+    };
+    document.addEventListener("mousedown", onDown);
+    document.addEventListener("touchstart", onDown, { passive: true });
+    document.addEventListener("keydown", onKey);
+    return () => {
+      document.removeEventListener("mousedown", onDown);
+      document.removeEventListener("touchstart", onDown);
+      document.removeEventListener("keydown", onKey);
+    };
+  }, [menuOpen]);
 
   return (
     <ExperienceProvider orgId={currentOrg?.id ?? null} channelId={currentChannelId} fallbackOrgId={fallbackOrgId}>
@@ -60,16 +90,28 @@ export function AppShell() {
         {user ? <OrgRail /> : null}
 
         <div className="min-w-0 flex-1">
+          <ToastViewport />
           <header className="border-b border-slate-800 bg-slate-950/80 backdrop-blur">
             <div className="flex items-center justify-between px-4 py-3">
               <Link to="/orgs" className="font-semibold tracking-tight">
-                <BrandLogo showText={true} height={26} />
+                <BrandLogo showText={true} height={70} width={80} />
               </Link>
 
               <div className="flex items-center gap-3">
                 {user ? (
                   <>
-                    <div className="relative">
+                    {currentOrgSlug ? (
+                      <button
+                        className="grid h-9 w-9 place-items-center rounded-md border border-slate-800 bg-slate-950/40 text-slate-200 hover:bg-slate-900"
+                        onClick={() => nav(`/app/${currentOrgSlug}/settings/notifications`)}
+                        type="button"
+                        title="Notifications"
+                        aria-label="Notifications"
+                      >
+                        <span aria-hidden="true">🔔</span>
+                      </button>
+                    ) : null}
+                    <div className="relative" ref={menuRef}>
                       <button
                         aria-expanded={menuOpen}
                         aria-haspopup="menu"
@@ -84,22 +126,9 @@ export function AppShell() {
                       {menuOpen ? (
                         <div
                           aria-label="User menu"
-                          className="absolute right-0 mt-2 w-48 overflow-hidden rounded-xl border border-slate-800 bg-slate-950 shadow-xl"
+                          className="flux-theme-lock absolute right-0 mt-2 w-48 overflow-hidden rounded-xl border border-slate-800 bg-slate-950 shadow-xl"
                           role="menu"
                         >
-                          {canSeeAdmin && currentOrgSlug ? (
-                            <button
-                              className="block w-full px-3 py-2 text-left text-sm text-slate-200 hover:bg-slate-900"
-                              onClick={() => {
-                                setMenuOpen(false);
-                                nav(`/admin/${currentOrgSlug}`);
-                              }}
-                              role="menuitem"
-                              type="button"
-                            >
-                              Admin
-                            </button>
-                          ) : null}
                           <button
                             className="block w-full px-3 py-2 text-left text-sm text-slate-200 hover:bg-slate-900"
                             onClick={() => {
@@ -111,6 +140,19 @@ export function AppShell() {
                           >
                             Profile
                           </button>
+                          {canSeeAdmin && orgForAdminSlug ? (
+                            <button
+                              className="block w-full px-3 py-2 text-left text-sm text-slate-200 hover:bg-slate-900"
+                              onClick={() => {
+                                setMenuOpen(false);
+                                nav(`/admin/${orgForAdminSlug}`);
+                              }}
+                              role="menuitem"
+                              type="button"
+                            >
+                              Admin
+                            </button>
+                          ) : null}
                           <button
                             className="block w-full px-3 py-2 text-left text-sm text-slate-200 hover:bg-slate-900"
                             onClick={async () => {

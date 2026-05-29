@@ -13,8 +13,9 @@ import type {
 } from "../api/types";
 import { Input } from "../components/Input";
 import { Button } from "../components/Button";
-import { applyBrandingToDom, useBrandingStore } from "../state/branding";
-import { COLOR_PALETTES, THEME_PRESETS, getThemePreset, type UIMode } from "../branding/presets";
+import { COLOR_PALETTES, DEFAULT_THEME_ID, THEME_PRESETS, getThemePreset } from "../branding/presets";
+import { useExperience } from "../features/experience/useExperience";
+import { useBrandingStore } from "../state/branding";
 
 type Tab = "branding" | "members" | "audit";
 
@@ -208,10 +209,10 @@ function BrandingPanel(props: {
 }) {
   const b = props.branding;
   const [appName, setAppName] = useState(b?.app_name ?? "");
-  const [mode, setMode] = useState<UIMode>(b?.ui_mode ?? "work");
-  const [themeId, setThemeId] = useState<string>(b?.ui_theme ?? (mode === "play" ? "play-01" : "work-01"));
+  const [themeId, setThemeId] = useState<string>(b?.ui_theme ?? DEFAULT_THEME_ID);
   const [logoDataUrl, setLogoDataUrl] = useState<string>(b?.logo_url ?? "");
-  const initialPreset = getThemePreset(mode, themeId);
+  const initialPreset = getThemePreset(themeId);
+  const uiMode = b?.ui_mode ?? "work";
   const [primary, setPrimary] = useState<string>(b?.primary_color ?? initialPreset.vars.brandPrimary);
   const [secondary, setSecondary] = useState<string>(b?.secondary_color ?? initialPreset.vars.brandSecondary);
   const [bg, setBg] = useState<string>(b?.bg_color ?? initialPreset.vars.appBg);
@@ -227,19 +228,55 @@ function BrandingPanel(props: {
   const [bubbleMeText, setBubbleMeText] = useState<string>(b?.chat_bubble_me_text ?? "#ffffff");
   const [bubbleOtherBg, setBubbleOtherBg] = useState<string>(b?.chat_bubble_other_bg ?? initialPreset.vars.appSurface);
   const [bubbleOtherText, setBubbleOtherText] = useState<string>(b?.chat_bubble_other_text ?? initialPreset.vars.appText);
+  const [hydratedFromBranding, setHydratedFromBranding] = useState(false);
+
+  const { previewBranding } = useExperience();
 
   const bOrgId = b?.organization_id ?? "";
   const bAppName = b?.app_name ?? "";
   const bUpdatedAt = b?.updated_at ?? "";
 
+  // Hydrate the form state when branding first arrives (or org changes),
+  // so the admin preview doesn't briefly force DEFAULT_THEME_ID.
+  useEffect(() => {
+    setHydratedFromBranding(false);
+    if (!b) return;
+
+    const nextThemeId = b.ui_theme ?? DEFAULT_THEME_ID;
+    const preset = getThemePreset(nextThemeId);
+
+    setAppName(b.app_name ?? "");
+    setThemeId(nextThemeId);
+    setLogoDataUrl(b.logo_url ?? "");
+
+    setPrimary(b.primary_color ?? preset.vars.brandPrimary);
+    setSecondary(b.secondary_color ?? preset.vars.brandSecondary);
+    setBg(b.bg_color ?? preset.vars.appBg);
+    setSurface(b.surface_color ?? preset.vars.appSurface);
+    setText(b.text_color ?? preset.vars.appText);
+    setMuted(b.muted_color ?? preset.vars.appMuted);
+    setBorder(b.border_color ?? preset.vars.appBorder);
+    setSelectionBg(b.selection_bg ?? preset.vars.brandPrimary);
+    setSelectionText(b.selection_text ?? preset.vars.appText);
+    setDropdownBg(b.dropdown_bg ?? preset.vars.appSurface);
+    setDropdownText(b.dropdown_text ?? preset.vars.appText);
+    setBubbleMeBg(b.chat_bubble_me_bg ?? preset.vars.brandPrimary);
+    setBubbleMeText(b.chat_bubble_me_text ?? "#ffffff");
+    setBubbleOtherBg(b.chat_bubble_other_bg ?? preset.vars.appSurface);
+    setBubbleOtherText(b.chat_bubble_other_text ?? preset.vars.appText);
+
+    setHydratedFromBranding(true);
+  }, [bOrgId]);
+
   useEffect(() => {
     if (!b) return;
-    const preset = getThemePreset(mode, themeId);
-    applyBrandingToDom({
+    if (!hydratedFromBranding) return;
+    const preset = getThemePreset(themeId);
+    previewBranding({
       organization_id: b.organization_id,
       app_name: appName || b.app_name,
       theme: preset.colorScheme,
-      ui_mode: mode,
+      ui_mode: uiMode,
       ui_theme: themeId,
       logo_url: logoDataUrl || null,
       primary_color: primary || null,
@@ -260,9 +297,11 @@ function BrandingPanel(props: {
       updated_at: b.updated_at,
     });
     return () => {
-      applyBrandingToDom(useBrandingStore.getState().branding);
+      previewBranding(null);
     };
   }, [
+    previewBranding,
+    hydratedFromBranding,
     appName,
     bg,
     border,
@@ -273,7 +312,6 @@ function BrandingPanel(props: {
     dropdownBg,
     dropdownText,
     logoDataUrl,
-    mode,
     muted,
     primary,
     secondary,
@@ -282,6 +320,7 @@ function BrandingPanel(props: {
     surface,
     text,
     themeId,
+    uiMode,
     bOrgId,
     bAppName,
     bUpdatedAt,
@@ -294,15 +333,17 @@ function BrandingPanel(props: {
   return (
     <div className="mt-4">
       <div className="text-sm text-slate-400">
-        Work/Play branding with Slate + Material accents. Colors are chosen from palettes (no URLs / free-form hex).
+        Set the theme for this organization. This theme is applied for all members while they are active in this org. Colors are chosen from palettes (no URLs / free-form hex).
       </div>
       <form
         className="mt-4 grid gap-3 sm:grid-cols-2"
         onSubmit={(e) => {
           e.preventDefault();
+          const preset = getThemePreset(themeId);
           props.onSave({
             app_name: appName,
-            ui_mode: mode,
+            theme: preset.colorScheme,
+            ui_mode: uiMode,
             ui_theme: themeId,
             logo_url: logoDataUrl || null,
             primary_color: primary || null,
@@ -324,38 +365,6 @@ function BrandingPanel(props: {
         }}
       >
         <div>
-          <label className="mb-1 block text-sm text-slate-300">Mode</label>
-          <select
-            className="w-full rounded-md border border-slate-800 bg-slate-900 px-3 py-2 text-sm text-slate-200 outline-none focus:border-indigo-500"
-            value={mode}
-            onChange={(e) => {
-              const nextMode = e.target.value as UIMode;
-              setMode(nextMode);
-              const nextTheme = nextMode === "play" ? "play-01" : "work-01";
-              setThemeId(nextTheme);
-              const p = getThemePreset(nextMode, nextTheme);
-              setPrimary(p.vars.brandPrimary);
-              setSecondary(p.vars.brandSecondary);
-              setBg(p.vars.appBg);
-              setSurface(p.vars.appSurface);
-              setText(p.vars.appText);
-              setMuted(p.vars.appMuted);
-              setBorder(p.vars.appBorder);
-              setSelectionBg(p.vars.brandPrimary);
-              setSelectionText(p.vars.appText);
-              setDropdownBg(p.vars.appSurface);
-              setDropdownText(p.vars.appText);
-              setBubbleMeBg(p.vars.brandPrimary);
-              setBubbleMeText("#ffffff");
-              setBubbleOtherBg(p.vars.appSurface);
-              setBubbleOtherText(p.vars.appText);
-            }}
-          >
-            <option value="work">Work Mode</option>
-            <option value="play">Play Mode</option>
-          </select>
-        </div>
-        <div>
           <label className="mb-1 block text-sm text-slate-300">Theme</label>
           <select
             className="w-full rounded-md border border-slate-800 bg-slate-900 px-3 py-2 text-sm text-slate-200 outline-none focus:border-indigo-500"
@@ -363,7 +372,7 @@ function BrandingPanel(props: {
             onChange={(e) => {
               const next = e.target.value;
               setThemeId(next);
-              const p = getThemePreset(mode, next);
+              const p = getThemePreset(next);
               setPrimary(p.vars.brandPrimary);
               setSecondary(p.vars.brandSecondary);
               setBg(p.vars.appBg);
@@ -376,24 +385,18 @@ function BrandingPanel(props: {
               setDropdownBg(p.vars.appSurface);
               setDropdownText(p.vars.appText);
               setBubbleMeBg(p.vars.brandPrimary);
-              setBubbleMeText("#ffffff");
+              setBubbleMeText(p.vars.onPrimary);
               setBubbleOtherBg(p.vars.appSurface);
               setBubbleOtherText(p.vars.appText);
             }}
           >
-            {THEME_PRESETS.filter((t) => t.mode === mode).map((t) => (
+            {THEME_PRESETS.map((t) => (
               <option key={t.id} value={t.id}>
-                {t.label}
+                {t.label} ({t.colorScheme})
               </option>
             ))}
           </select>
-          <div className="mt-1 text-xs text-slate-500">{getThemePreset(mode, themeId).description}</div>
-        </div>
-        <div>
-          <label className="mb-1 block text-sm text-slate-300">Scheme</label>
-          <div className="rounded-md border border-slate-800 bg-slate-900 px-3 py-2 text-sm text-slate-200">
-            {getThemePreset(mode, themeId).colorScheme === "light" ? "Light" : "Dark"} (from theme)
-          </div>
+          <div className="mt-1 text-xs text-slate-500">{getThemePreset(themeId).description}</div>
         </div>
         <div className="sm:col-span-2">
           <label className="mb-1 block text-sm text-slate-300">App name</label>
@@ -444,7 +447,7 @@ function BrandingPanel(props: {
               type="button"
               className="rounded-md border border-slate-800 bg-slate-900 px-3 py-1.5 text-xs text-slate-200 hover:bg-slate-800/60"
               onClick={() => {
-                const p = getThemePreset(mode, themeId);
+                const p = getThemePreset(themeId);
                 setPrimary(p.vars.brandPrimary);
                 setSecondary(p.vars.brandSecondary);
                 setBg(p.vars.appBg);
@@ -457,7 +460,7 @@ function BrandingPanel(props: {
                 setDropdownBg(p.vars.appSurface);
                 setDropdownText(p.vars.appText);
                 setBubbleMeBg(p.vars.brandPrimary);
-                setBubbleMeText("#ffffff");
+                setBubbleMeText(p.vars.onPrimary);
                 setBubbleOtherBg(p.vars.appSurface);
                 setBubbleOtherText(p.vars.appText);
               }}
@@ -466,50 +469,194 @@ function BrandingPanel(props: {
             </button>
           </div>
           <div className="grid gap-3 sm:grid-cols-2">
-            <ColorPicker label="Primary (buttons)" value={primary} palette={COLOR_PALETTES.primary} onPick={setPrimary} />
-            <ColorPicker label="Secondary" value={secondary} palette={COLOR_PALETTES.primary} onPick={setSecondary} />
-            <ColorPicker label="Background" value={bg} palette={COLOR_PALETTES.background} onPick={setBg} />
-            <ColorPicker label="Surface" value={surface} palette={COLOR_PALETTES.surface} onPick={setSurface} />
-            <ColorPicker label="Text" value={text} palette={COLOR_PALETTES.text} onPick={setText} />
-            <ColorPicker label="Muted text" value={muted} palette={COLOR_PALETTES.muted} onPick={setMuted} />
-            <ColorPicker label="Border" value={border} palette={COLOR_PALETTES.border} onPick={setBorder} />
+            <ColorPicker
+              label="Primary (buttons)"
+              value={primary}
+              palette={COLOR_PALETTES.primary}
+              onPick={setPrimary}
+              preview={
+                <div className="flex gap-2 p-2" style={{ backgroundColor: bg }}>
+                  <button type="button" className="rounded px-3 py-1 text-xs font-medium" style={{ backgroundColor: primary, color: getThemePreset(themeId).vars.onPrimary }}>Save</button>
+                  <button type="button" className="rounded px-3 py-1 text-xs font-medium" style={{ backgroundColor: primary, color: getThemePreset(themeId).vars.onPrimary, opacity: 0.6 }}>Disabled</button>
+                </div>
+              }
+            />
+            <ColorPicker
+              label="Secondary"
+              value={secondary}
+              palette={COLOR_PALETTES.primary}
+              onPick={setSecondary}
+              preview={
+                <div className="flex items-center gap-2 p-2" style={{ backgroundColor: bg }}>
+                  <span className="rounded px-2 py-0.5 text-[10px] font-semibold" style={{ backgroundColor: secondary, color: "#ffffff" }}>Badge</span>
+                  <span className="text-[10px]" style={{ color: secondary }}>Link / accent</span>
+                </div>
+              }
+            />
+            <ColorPicker
+              label="Background"
+              value={bg}
+              palette={COLOR_PALETTES.background}
+              onPick={setBg}
+              preview={
+                <div className="flex items-center justify-between p-3" style={{ backgroundColor: bg }}>
+                  <span className="text-[10px] font-medium" style={{ color: text }}>Page background</span>
+                  <span className="rounded p-1 text-[9px]" style={{ backgroundColor: surface, color: muted, border: `1px solid ${border}` }}>surface</span>
+                </div>
+              }
+            />
+            <ColorPicker
+              label="Surface"
+              value={surface}
+              palette={COLOR_PALETTES.surface}
+              onPick={setSurface}
+              preview={
+                <div className="p-2" style={{ backgroundColor: bg }}>
+                  <div className="rounded p-2" style={{ backgroundColor: surface, border: `1px solid ${border}` }}>
+                    <div className="text-[10px] font-semibold" style={{ color: text }}>Card title</div>
+                    <div className="mt-0.5 text-[9px]" style={{ color: muted }}>Card / panel surface</div>
+                  </div>
+                </div>
+              }
+            />
+            <ColorPicker
+              label="Text"
+              value={text}
+              palette={COLOR_PALETTES.text}
+              onPick={setText}
+              preview={
+                <div className="p-2" style={{ backgroundColor: bg }}>
+                  <div className="text-[11px] font-semibold" style={{ color: text }}>Main body text</div>
+                  <div className="mt-0.5 text-[10px]" style={{ color: muted }}>Secondary / helper text</div>
+                </div>
+              }
+            />
+            <ColorPicker
+              label="Muted text"
+              value={muted}
+              palette={COLOR_PALETTES.muted}
+              onPick={setMuted}
+              preview={
+                <div className="p-2" style={{ backgroundColor: surface }}>
+                  <div className="text-[11px]" style={{ color: text }}>Regular text</div>
+                  <div className="mt-0.5 text-[10px]" style={{ color: muted }}>Muted / helper text</div>
+                  <div className="mt-0.5 text-[9px]" style={{ color: muted, opacity: 0.7 }}>Timestamp · meta info</div>
+                </div>
+              }
+            />
+            <ColorPicker
+              label="Border"
+              value={border}
+              palette={COLOR_PALETTES.border}
+              onPick={setBorder}
+              preview={
+                <div className="p-2" style={{ backgroundColor: bg }}>
+                  <div className="rounded p-2 text-[10px]" style={{ border: `1px solid ${border}`, backgroundColor: surface, color: text }}>
+                    Card with border
+                  </div>
+                  <div className="mt-1.5 h-px" style={{ backgroundColor: border }} />
+                </div>
+              }
+            />
             <ColorPicker
               label="Selected text bg"
               value={selectionBg}
               palette={COLOR_PALETTES.primary}
               onPick={setSelectionBg}
+              preview={
+                <div className="p-2 text-[11px]" style={{ backgroundColor: bg, color: text }}>
+                  Normal text&nbsp;
+                  <span style={{ backgroundColor: selectionBg, color: selectionText }}>highlighted selection</span>
+                  &nbsp;normal text
+                </div>
+              }
             />
             <ColorPicker
               label="Selected text color"
               value={selectionText}
               palette={COLOR_PALETTES.text}
               onPick={setSelectionText}
+              preview={
+                <div className="p-2 text-[11px]" style={{ backgroundColor: bg, color: text }}>
+                  Normal text&nbsp;
+                  <span style={{ backgroundColor: selectionBg, color: selectionText }}>highlighted selection</span>
+                  &nbsp;normal text
+                </div>
+              }
             />
-            <ColorPicker label="Dropdown bg" value={dropdownBg} palette={COLOR_PALETTES.surface} onPick={setDropdownBg} />
-            <ColorPicker label="Dropdown text" value={dropdownText} palette={COLOR_PALETTES.text} onPick={setDropdownText} />
+            <ColorPicker
+              label="Dropdown bg"
+              value={dropdownBg}
+              palette={COLOR_PALETTES.surface}
+              onPick={setDropdownBg}
+              preview={
+                <div className="rounded overflow-hidden" style={{ backgroundColor: dropdownBg, border: `1px solid ${border}` }}>
+                  <div className="px-2 py-1.5 text-[10px]" style={{ color: dropdownText }}>Menu option</div>
+                  <div className="px-2 py-1.5 text-[10px]" style={{ backgroundColor: selectionBg, color: selectionText }}>Active option</div>
+                  <div className="px-2 py-1.5 text-[10px]" style={{ color: dropdownText }}>Another option</div>
+                </div>
+              }
+            />
+            <ColorPicker
+              label="Dropdown text"
+              value={dropdownText}
+              palette={COLOR_PALETTES.text}
+              onPick={setDropdownText}
+              preview={
+                <div className="rounded overflow-hidden" style={{ backgroundColor: dropdownBg, border: `1px solid ${border}` }}>
+                  <div className="px-2 py-1.5 text-[10px]" style={{ color: dropdownText }}>Menu option</div>
+                  <div className="px-2 py-1.5 text-[10px]" style={{ backgroundColor: selectionBg, color: selectionText }}>Active option</div>
+                  <div className="px-2 py-1.5 text-[10px]" style={{ color: dropdownText }}>Another option</div>
+                </div>
+              }
+            />
             <ColorPicker
               label="Chat bubble (me) bg"
               value={bubbleMeBg}
               palette={COLOR_PALETTES.primary}
               onPick={setBubbleMeBg}
+              preview={
+                <div className="flex flex-col gap-1 p-2" style={{ backgroundColor: bg }}>
+                  <div className="self-end rounded-lg px-2 py-1 text-[10px] max-w-[75%]" style={{ backgroundColor: bubbleMeBg, color: bubbleMeText }}>Hey there! 👋</div>
+                  <div className="self-start rounded-lg px-2 py-1 text-[10px] max-w-[75%]" style={{ backgroundColor: bubbleOtherBg, color: bubbleOtherText }}>Hi! How are you?</div>
+                </div>
+              }
             />
             <ColorPicker
               label="Chat bubble (me) text"
               value={bubbleMeText}
               palette={["#ffffff", ...COLOR_PALETTES.text]}
               onPick={setBubbleMeText}
+              preview={
+                <div className="flex flex-col gap-1 p-2" style={{ backgroundColor: bg }}>
+                  <div className="self-end rounded-lg px-2 py-1 text-[10px] max-w-[75%]" style={{ backgroundColor: bubbleMeBg, color: bubbleMeText }}>Hey there! 👋</div>
+                  <div className="self-start rounded-lg px-2 py-1 text-[10px] max-w-[75%]" style={{ backgroundColor: bubbleOtherBg, color: bubbleOtherText }}>Hi! How are you?</div>
+                </div>
+              }
             />
             <ColorPicker
               label="Chat bubble (other) bg"
               value={bubbleOtherBg}
               palette={COLOR_PALETTES.surface}
               onPick={setBubbleOtherBg}
+              preview={
+                <div className="flex flex-col gap-1 p-2" style={{ backgroundColor: bg }}>
+                  <div className="self-end rounded-lg px-2 py-1 text-[10px] max-w-[75%]" style={{ backgroundColor: bubbleMeBg, color: bubbleMeText }}>Hey there! 👋</div>
+                  <div className="self-start rounded-lg px-2 py-1 text-[10px] max-w-[75%]" style={{ backgroundColor: bubbleOtherBg, color: bubbleOtherText }}>Hi! How are you?</div>
+                </div>
+              }
             />
             <ColorPicker
               label="Chat bubble (other) text"
               value={bubbleOtherText}
               palette={COLOR_PALETTES.text}
               onPick={setBubbleOtherText}
+              preview={
+                <div className="flex flex-col gap-1 p-2" style={{ backgroundColor: bg }}>
+                  <div className="self-end rounded-lg px-2 py-1 text-[10px] max-w-[75%]" style={{ backgroundColor: bubbleMeBg, color: bubbleMeText }}>Hey there! 👋</div>
+                  <div className="self-start rounded-lg px-2 py-1 text-[10px] max-w-[75%]" style={{ backgroundColor: bubbleOtherBg, color: bubbleOtherText }}>Hi! How are you?</div>
+                </div>
+              }
             />
           </div>
           <div className="mt-2 text-xs text-slate-500">Privacy/terms URLs are intentionally not editable here.</div>
@@ -527,29 +674,78 @@ function BrandingPanel(props: {
   );
 }
 
-function ColorPicker(props: { label: string; value: string; palette: string[]; onPick: (v: string) => void }) {
+function ColorPicker(props: {
+  label: string;
+  value: string;
+  palette: string[];
+  onPick: (v: string) => void;
+  preview: React.ReactNode;
+}) {
+  const [open, setOpen] = useState(false);
   return (
-    <div className="rounded-lg border border-slate-800 bg-slate-950/30 p-3">
-      <div className="mb-2 flex items-center justify-between gap-2">
-        <div className="text-xs font-semibold text-slate-300">{props.label}</div>
-        <div className="font-mono text-[11px] text-slate-500">{props.value}</div>
-      </div>
-      <div className="flex flex-wrap gap-2">
-        {props.palette.map((c) => {
-          const selected = c.toLowerCase() === props.value.toLowerCase();
-          return (
-            <button
-              key={c}
-              type="button"
-              className={`h-6 w-6 rounded-full border ${selected ? "border-white" : "border-slate-700"} hover:scale-[1.03]`}
-              style={{ backgroundColor: c }}
-              onClick={() => props.onPick(c)}
-              title={c}
-              aria-label={`${props.label} ${c}`}
+    <div className="rounded-lg border border-slate-800 bg-slate-950/30">
+      <button
+        type="button"
+        aria-expanded={open}
+        className="flex w-full items-center gap-2 rounded-lg px-3 py-2 text-left hover:bg-slate-800/40"
+        onClick={() => setOpen((v) => !v)}
+      >
+        <span
+          className="h-4 w-4 shrink-0 rounded border border-white/20"
+          style={{ backgroundColor: props.value }}
+        />
+        <span className="flex-1 text-xs font-semibold text-slate-300">{props.label}</span>
+        <span className="font-mono text-[10px] text-slate-500">{props.value}</span>
+        <svg
+          className={`h-3 w-3 shrink-0 text-slate-500 transition-transform ${open ? "rotate-180" : ""}`}
+          viewBox="0 0 12 8"
+          fill="none"
+          stroke="currentColor"
+          strokeWidth="1.5"
+          strokeLinecap="round"
+        >
+          <path d="M1 1l5 5 5-5" />
+        </svg>
+      </button>
+
+      {open ? (
+        <div className="space-y-3 border-t border-slate-800 px-3 pb-3 pt-2">
+          <div className="overflow-hidden rounded-md border border-slate-700 text-xs">
+            {props.preview}
+          </div>
+
+          <div className="flex items-center gap-2">
+            <input
+              type="color"
+              value={props.value}
+              onChange={(e) => props.onPick(e.target.value)}
+              className="h-7 w-10 cursor-pointer rounded border border-slate-700 bg-transparent p-0.5"
+              title="Pick custom color"
             />
-          );
-        })}
-      </div>
+            <span className="font-mono text-[11px] text-slate-400">{props.value}</span>
+          </div>
+
+          <div className="flex flex-wrap gap-1.5">
+            {props.palette.map((c) => {
+              const selected = c.toLowerCase() === props.value.toLowerCase();
+              return (
+                <button
+                  key={c}
+                  type="button"
+                  title={c}
+                  aria-label={`${props.label}: ${c}`}
+                  aria-pressed={selected}
+                  className={`h-5 w-5 rounded-sm border transition-transform hover:scale-110 ${
+                    selected ? "scale-110 border-white" : "border-slate-600 hover:border-slate-400"
+                  }`}
+                  style={{ backgroundColor: c }}
+                  onClick={() => props.onPick(c)}
+                />
+              );
+            })}
+          </div>
+        </div>
+      ) : null}
     </div>
   );
 }

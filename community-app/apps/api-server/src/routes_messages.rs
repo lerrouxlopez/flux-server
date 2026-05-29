@@ -134,16 +134,19 @@ async fn list_messages(
         Err(e) => return e,
     };
 
+    // Exclude thread replies from the main channel timeline; keep thread roots.
     let rows = if let Some((created_at, id)) = cursor {
         sqlx::query(
             r#"
-            select id, organization_id, channel_id, sender_id, thread_id, body, kind, created_at, edited_at, deleted_at
-            from messages
-            where organization_id = $1
-              and channel_id = $2
-              and deleted_at is null
-              and (created_at, id) < ($3, $4)
-            order by created_at desc, id desc
+            select m.id, m.organization_id, m.channel_id, m.sender_id, m.thread_id, m.body, m.kind, m.created_at, m.edited_at, m.deleted_at
+            from messages m
+            left join threads t on t.id = m.thread_id
+            where m.organization_id = $1
+              and m.channel_id = $2
+              and m.deleted_at is null
+              and (m.thread_id is null or t.root_message_id = m.id)
+              and (m.created_at, m.id) < ($3, $4)
+            order by m.created_at desc, m.id desc
             limit $5
             "#,
         )
@@ -157,12 +160,14 @@ async fn list_messages(
     } else {
         sqlx::query(
             r#"
-            select id, organization_id, channel_id, sender_id, thread_id, body, kind, created_at, edited_at, deleted_at
-            from messages
-            where organization_id = $1
-              and channel_id = $2
-              and deleted_at is null
-            order by created_at desc, id desc
+            select m.id, m.organization_id, m.channel_id, m.sender_id, m.thread_id, m.body, m.kind, m.created_at, m.edited_at, m.deleted_at
+            from messages m
+            left join threads t on t.id = m.thread_id
+            where m.organization_id = $1
+              and m.channel_id = $2
+              and m.deleted_at is null
+              and (m.thread_id is null or t.root_message_id = m.id)
+            order by m.created_at desc, m.id desc
             limit $3
             "#,
         )

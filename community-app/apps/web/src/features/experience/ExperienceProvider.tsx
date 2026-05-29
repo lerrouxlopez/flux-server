@@ -2,7 +2,9 @@ import { keepPreviousData, useMutation, useQuery, useQueryClient } from "@tansta
 import React, { createContext, useCallback, useEffect, useMemo, useState } from "react";
 import { apiFetch } from "../../api/client";
 import { useAuthStore } from "../../state/auth";
-import { applyBrandingToDom, useBrandingStore } from "../../state/branding";
+import { applyBrandingToDom, useBrandingStore, type PublicBranding } from "../../state/branding";
+import { DEFAULT_THEME_ID, getThemePreset } from "../../branding/presets";
+import { useUserThemeStore } from "../../state/userTheme";
 
 export type RawExperienceMode = "work" | "play";
 export type ExperienceModeLabel = "Work Mode" | "Game Mode";
@@ -27,6 +29,17 @@ export type ExperienceContextValue = {
     auto_subscribe: boolean;
   };
   featureFlags: Record<string, boolean>;
+
+  /** Current effective theme id. In org context: org-controlled (admin preview may override). Outside org: user's personal theme. */
+  themeId: string;
+  /** Whether currently within an org context (orgId was explicitly provided). */
+  isOrgContext: boolean;
+  /** User's personal theme id (applies outside org context). */
+  userThemeId: string;
+  /** Update the user's personal theme preference. */
+  setUserTheme: (id: string) => void;
+  /** Temporarily override the full branding (for admin preview). Pass null to clear. */
+  previewBranding: (data: PublicBranding | null) => void;
 
   isLoading: boolean;
   error: string | null;
@@ -58,10 +71,6 @@ function normalizeMode(v: unknown): RawExperienceMode | null {
 
 function modeLabel(m: RawExperienceMode): ExperienceModeLabel {
   return m === "play" ? "Game Mode" : "Work Mode";
-}
-
-function defaultColorScheme(m: RawExperienceMode): ExperienceColorScheme {
-  return m === "play" ? "dark" : "light";
 }
 
 function defaultDensity(m: RawExperienceMode): ExperienceDensity {
@@ -102,12 +111,26 @@ export function ExperienceProvider(props: {
   const user = useAuthStore((s) => s.user);
   const qc = useQueryClient();
   const branding = useBrandingStore((s) => s.branding);
+  const loadOrgBranding = useBrandingStore((s) => s.loadOrgBranding);
+  const userThemeId = useUserThemeStore((s) => s.themeId);
+  const setUserTheme = useUserThemeStore((s) => s.setThemeId);
 
   const [localMode, setLocalMode] = useState<RawExperienceMode>(() => {
     return normalizeMode(localStorage.getItem(LS_MODE_PREFERENCE)) ?? "work";
   });
 
+  // Transient full branding override for admin preview. Takes precedence over Zustand store branding.
+  const [previewBrandingData, setPreviewBrandingData] = useState<PublicBranding | null>(null);
+
   const effectiveOrgId = props.orgId ?? props.fallbackOrgId ?? null;
+
+  // Keep org branding in sync with the active org so theming always follows organization context
+  // (including on admin routes where pages may not explicitly load branding).
+  useEffect(() => {
+    if (!user) return;
+    if (!effectiveOrgId) return;
+    loadOrgBranding(effectiveOrgId).catch(() => {});
+  }, [effectiveOrgId, loadOrgBranding, user]);
 
   const ctx = useQuery({
     enabled: !!user && !!effectiveOrgId,
@@ -123,10 +146,10 @@ export function ExperienceProvider(props: {
   });
 
   const patchPref = useMutation({
-    mutationFn: async (mode: RawExperienceMode | null) => {
-      return apiFetch<{ status: string; mode_preference: RawExperienceMode | null }>("/experience/preferences", {
+    mutationFn: async (patch: { mode_preference?: RawExperienceMode | null }) => {
+      return apiFetch<{ status: string }>("/experience/preferences", {
         method: "PATCH",
-        body: JSON.stringify({ mode_preference: mode }),
+        body: JSON.stringify(patch),
       });
     },
     onSuccess: async () => {
@@ -138,7 +161,7 @@ export function ExperienceProvider(props: {
     (mode: RawExperienceMode) => {
       setLocalMode(mode);
       localStorage.setItem(LS_MODE_PREFERENCE, mode);
-      if (user) patchPref.mutate(mode);
+      if (user) patchPref.mutate({ mode_preference: mode });
     },
     [patchPref, user],
   );
@@ -146,10 +169,19 @@ export function ExperienceProvider(props: {
   const clearModePreference = useCallback(() => {
     localStorage.removeItem(LS_MODE_PREFERENCE);
     setLocalMode("work");
-    if (user) patchPref.mutate(null);
+    if (user) patchPref.mutate({ mode_preference: null });
   }, [patchPref, user]);
 
+  const previewBranding = useCallback((data: PublicBranding | null) => {
+    setPreviewBrandingData(data);
+  }, []);
+
   const resolvedMode: RawExperienceMode = normalizeMode(ctx.data?.mode) ?? localMode;
+
+  // In org context: org admin controls the theme (preview may override).
+  // Outside org context: user's personal theme preference applies.
+  const resolvedThemeId: string = previewBrandingData?.ui_theme ??
+    (props.orgId !== null ? (branding?.ui_theme ?? DEFAULT_THEME_ID) : userThemeId);
 
   const value: ExperienceContextValue = useMemo(() => {
     const mode = resolvedMode;
@@ -157,13 +189,19 @@ export function ExperienceProvider(props: {
     return {
       rawMode: mode,
       label: modeLabel(mode),
-      colorScheme: defaultColorScheme(mode),
+      colorScheme: getThemePreset(resolvedThemeId).colorScheme,
       density: ctx.data?.density ?? defaultDensity(mode),
       motion: ctx.data?.motion ?? defaultMotion(mode),
       source: ctx.data?.source ?? (ctx.isFetching ? "loading" : "local_preference"),
       notificationProfile: ctx.data?.notification_profile ?? (mode === "play" ? "minimal" : "all"),
       mediaDefaults,
       featureFlags: ctx.data?.feature_flags ?? {},
+
+      themeId: resolvedThemeId,
+      isOrgContext: props.orgId !== null,
+      userThemeId,
+      setUserTheme,
+      previewBranding,
 
       isLoading: ctx.isLoading || patchPref.isPending,
       error: ctx.isError ? (ctx.error as Error).message : null,
@@ -174,6 +212,10 @@ export function ExperienceProvider(props: {
     };
   }, [
     resolvedMode,
+    resolvedThemeId,
+    props.orgId,
+    userThemeId,
+    setUserTheme,
     ctx.data,
     ctx.error,
     ctx.isError,
@@ -182,12 +224,26 @@ export function ExperienceProvider(props: {
     ctx.refetch,
     patchPref.isPending,
     setMode,
+    previewBranding,
     clearModePreference,
   ]);
 
+  // Apply theme to DOM.
+  // Priority: admin preview > org branding (in org context) > user personal theme (global pages).
   useEffect(() => {
-    applyBrandingToDom(branding, { uiMode: value.rawMode });
-  }, [branding, value.rawMode]);
+    if (previewBrandingData) {
+      applyBrandingToDom(previewBrandingData);
+    } else if (props.orgId !== null) {
+      applyBrandingToDom(branding);
+    } else {
+      applyBrandingToDom(null, { themeId: userThemeId });
+    }
+  }, [branding, previewBrandingData, props.orgId, userThemeId]);
+
+  // Sync mode to DOM separately — mode is a feature toggle, not a visual theme.
+  useEffect(() => {
+    document.documentElement.dataset.uiMode = resolvedMode;
+  }, [resolvedMode]);
 
   return <ExperienceContext.Provider value={value}>{props.children}</ExperienceContext.Provider>;
 }

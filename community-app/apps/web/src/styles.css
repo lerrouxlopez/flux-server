@@ -7,13 +7,13 @@
     color-scheme: dark;
 
     /* Legacy/compat (still used by branding.ts + existing skin rules) */
-    --brand-primary: #4f46e5;
-    --brand-secondary: #111827;
-    --app-bg: #020617; /* slate-950 */
-    --app-surface: #0b1220; /* slightly lifted */
-    --app-border: #1f2937; /* slate-800 */
-    --app-text: #e2e8f0; /* slate-200 */
-    --app-muted: #94a3b8; /* slate-400 */
+    --brand-primary: #6264a7; /* Teams purple */
+    --brand-secondary: #5b5fc7;
+    --app-bg: #1f1f1f;
+    --app-surface: #292929;
+    --app-border: #3d3c42;
+    --app-text: #f3f2f1;
+    --app-muted: #a6a7a9;
 
     /* --- FLUX Design Tokens (defaults derived from legacy vars) --- */
     /* Palette (semantic) */
@@ -66,10 +66,10 @@
     --flux-duration-normal: 180ms;
     --flux-duration-slow: 260ms;
 
-    /* Mode overlays (subtle chrome differences; safe defaults = no overlay) */
+    /* Mode overlays — kept as transparent no-ops; mode no longer drives theming */
     --flux-overlay-work: transparent;
     --flux-overlay-play: transparent;
-    --flux-overlay-active: var(--flux-overlay-work);
+    --flux-overlay-active: transparent;
 
     /* Derived interaction tokens */
     --flux-on-accent: #ffffff;
@@ -83,12 +83,6 @@
     --flux-link-hover: color-mix(in srgb, var(--flux-color-accent) 55%, var(--flux-color-text) 45%);
   }
 
-  :root.branded[data-ui-mode="work"] {
-    --flux-overlay-active: var(--flux-overlay-work);
-  }
-  :root.branded[data-ui-mode="play"] {
-    --flux-overlay-active: var(--flux-overlay-play);
-  }
 }
 
 /* Brand skin (Work/Play modes + themes) */
@@ -173,6 +167,42 @@
 }
 :root.branded .text-slate-100 {
   color: color-mix(in srgb, var(--app-text) 90%, #ffffff 10%) !important;
+}
+
+/* Light-scheme: remap classes that would produce invisible text on light backgrounds */
+:root.branded[data-color-scheme="light"] .text-white,
+:root.branded[data-color-scheme="light"] .text-slate-50 {
+  color: var(--app-text) !important;
+}
+
+/* Dark-scheme: remap dark text classes that would be hard to read on dark surfaces */
+:root.branded[data-color-scheme="dark"] .text-slate-600,
+:root.branded[data-color-scheme="dark"] .text-slate-700 {
+  color: var(--app-muted) !important;
+}
+
+/* bg-slate-950 without opacity (e.g. dropdown, modals) */
+:root.branded .bg-slate-950 {
+  background-color: var(--app-bg) !important;
+}
+
+/* Theme lock — CSS vars are reset to Teams Dark so all token references inside
+   this element always render in the default dark palette, ignoring active theme. */
+.flux-theme-lock {
+  --app-bg: #1f1f1f;
+  --app-surface: #292929;
+  --app-border: #3d3c42;
+  --app-text: #f3f2f1;
+  --app-muted: #a6a7a9;
+  --brand-primary: #6264a7;
+  --brand-secondary: #5b5fc7;
+  --flux-color-accent: #6264a7;
+  --flux-color-bg: #1f1f1f;
+  --flux-color-surface-1: #292929;
+  --flux-color-border: #3d3c42;
+  --flux-color-text: #f3f2f1;
+  --flux-color-muted: #a6a7a9;
+  --flux-on-accent: #ffffff;
 }
 
 /* Token utilities (prefer these in primary shells/screens) */
