@@ -29,7 +29,7 @@ pub fn router() -> Router<AppState> {
         .route("/", post(create_org).get(list_orgs))
         .route("/discover", get(discover_orgs))
         .route("/join", post(join_org_by_invite))
-        .route("/{org_id}", get(get_org))
+        .route("/{org_id}", get(get_org).delete(delete_org))
         .route("/{org_id}/join", post(join_open_org))
         .route(
             "/{org_id}/join-requests",
@@ -1226,6 +1226,53 @@ async fn get_org(
         }),
     )
         .into_response()
+}
+
+async fn delete_org(
+    State(state): State<AppState>,
+    auth: AuthContext,
+    Path(org_id): Path<Uuid>,
+) -> impl IntoResponse {
+    Span::current().record("organization_id", tracing::field::display(org_id));
+
+    // Deletion is restricted to the owner specifically (not just ORG_MANAGE, which the
+    // admin role also carries) — same special-casing `update_member_role` uses for
+    // owner-only actions, since this is irreversible and destroys every org-scoped row.
+    let role = sqlx::query_scalar::<_, String>(
+        r#"
+        select role
+        from organization_members
+        where organization_id = $1 and user_id = $2
+        "#,
+    )
+    .bind(org_id)
+    .bind(auth.user_id)
+    .fetch_optional(&state.pool)
+    .await;
+
+    match role {
+        Ok(Some(r)) if r == "owner" => {}
+        Ok(Some(_)) => return util::api_error(ApiErrorCode::PermissionDenied),
+        Ok(None) => return util::api_error(ApiErrorCode::NotFound),
+        Err(_) => return util::api_error(ApiErrorCode::InternalError),
+    }
+
+    // Every organization_id foreign key in the schema is ON DELETE CASCADE
+    // (members, roles, channels, messages, branding, invites, audit logs, etc.),
+    // so deleting the row here is sufficient to clean up the rest.
+    let deleted = sqlx::query(r#"delete from organizations where id = $1"#)
+        .bind(org_id)
+        .execute(&state.pool)
+        .await;
+
+    match deleted {
+        Ok(r) if r.rows_affected() == 0 => util::api_error(ApiErrorCode::NotFound),
+        Ok(_) => {
+            tracing::info!(organization_id = %org_id, actor_id = %auth.user_id, "organization deleted");
+            (StatusCode::OK, Json(serde_json::json!({"status":"ok"}))).into_response()
+        }
+        Err(_) => util::api_error(ApiErrorCode::InternalError),
+    }
 }
 
 async fn list_members(
