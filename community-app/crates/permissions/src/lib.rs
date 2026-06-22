@@ -9,6 +9,7 @@ pub mod perms {
     pub const BRANDING_MANAGE: Perms = 1 << 2;
     pub const ADMIN_AUDIT_LOG_VIEW: Perms = 1 << 3;
     pub const ORG_INVITES_CREATE: Perms = 1 << 4;
+    pub const NOTIFICATIONS_MANAGE: Perms = 1 << 5;
 
     // --- Channels ---
     pub const CHANNELS_VIEW: Perms = 1 << 10;
@@ -51,6 +52,7 @@ pub enum Permission {
     BrandingManage,
     AdminAuditLogView,
     OrgInvitesCreate,
+    NotificationsManage,
 
     ChannelsView,
     ChannelsCreate,
@@ -79,6 +81,7 @@ impl Permission {
             Permission::BrandingManage => BRANDING_MANAGE,
             Permission::AdminAuditLogView => ADMIN_AUDIT_LOG_VIEW,
             Permission::OrgInvitesCreate => ORG_INVITES_CREATE,
+            Permission::NotificationsManage => NOTIFICATIONS_MANAGE,
 
             Permission::ChannelsView => CHANNELS_VIEW,
             Permission::ChannelsCreate => CHANNELS_CREATE,

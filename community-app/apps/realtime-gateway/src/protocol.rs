@@ -19,6 +19,8 @@ pub enum ClientEvent {
     MediaSubscribe { room_id: Uuid },
     #[serde(rename = "media.unsubscribe")]
     MediaUnsubscribe { room_id: Uuid },
+    #[serde(rename = "channel.buzz")]
+    ChannelBuzz { channel_id: Uuid },
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -110,6 +112,13 @@ pub enum ServerEvent {
         channel_id: Uuid,
         message_id: Uuid,
         action: String,
+        occurred_at: String,
+    },
+
+    #[serde(rename = "channel.buzzed")]
+    ChannelBuzzed {
+        channel_id: Uuid,
+        user_id: Uuid,
         occurred_at: String,
     },
 }
