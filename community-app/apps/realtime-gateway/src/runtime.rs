@@ -13,6 +13,7 @@ use uuid::Uuid;
 const PRESENCE_TTL_SECS: u64 = 90;
 const PRESENCE_REFRESH_SECS: u64 = 30;
 const TYPING_TTL_SECS: u64 = 5;
+const BUZZ_COOLDOWN_SECS: u64 = 10;
 
 #[derive(Clone)]
 pub struct Runtime {
@@ -93,6 +94,13 @@ impl Runtime {
                     return;
                 }
             };
+            let mut sub_buzz = match nats.subscribe("channel.*.buzzed").await {
+                Ok(s) => s,
+                Err(e) => {
+                    warn!(?e, "nats subscribe failed (channel.buzzed)");
+                    return;
+                }
+            };
 
             loop {
                 tokio::select! {
@@ -136,6 +144,12 @@ impl Runtime {
                         let Some(msg) = msg else { break; };
                         if let Err(e) = handle_channel_pins_changed(&hub, msg.payload).await {
                             debug!(?e, "failed to handle channel.pins.changed");
+                        }
+                    }
+                    msg = sub_buzz.next() => {
+                        let Some(msg) = msg else { break; };
+                        if let Ok(evt) = serde_json::from_slice::<ServerEvent>(&msg.payload) {
+                            hub.broadcast_event(&evt);
                         }
                     }
                 }
@@ -285,6 +299,11 @@ impl Hub {
             } => {
                 self.broadcast_to_channel(*channel_id, evt);
                 self.broadcast_to_org(*organization_id, evt);
+            }
+            ServerEvent::ChannelBuzzed { channel_id, .. } => {
+                // Channel-scoped only, by design: this should reach the members
+                // currently in that channel, not the whole org.
+                self.broadcast_to_channel(*channel_id, evt);
             }
         }
     }
@@ -470,6 +489,39 @@ async fn handle_client_event(
                 set.remove(&conn_id);
             }
             info!(%user_id, %room_id, "unsubscribed media room");
+            Ok(())
+        }
+        ClientEvent::ChannelBuzz { channel_id } => {
+            let _org_id = ensure_channel_access(pool, user_id, org_ids, channel_id).await?;
+
+            // Per-user-per-channel cooldown so one member can't spam buzz. Only
+            // publish to NATS here (not a direct local broadcast like typing.start
+            // does) -- the nats subscription loop below is the single place that
+            // turns this into a hub broadcast, so a single buzz can't double-fire
+            // the client's shake/sound on a single-node deployment.
+            let cooldown_key = format!("buzz:{channel_id}:{user_id}");
+            let acquired: redis::RedisResult<Option<String>> = redis::cmd("SET")
+                .arg(&cooldown_key)
+                .arg("1")
+                .arg("NX")
+                .arg("EX")
+                .arg(BUZZ_COOLDOWN_SECS)
+                .query_async(redis)
+                .await;
+            if acquired.ok().flatten().is_none() {
+                debug!(%user_id, %channel_id, "buzz on cooldown, dropping");
+                return Ok(());
+            }
+
+            let evt = ServerEvent::ChannelBuzzed {
+                channel_id,
+                user_id,
+                occurred_at: time::OffsetDateTime::now_utc().to_string(),
+            };
+            let payload = serde_json::to_vec(&evt)?;
+            let subject = format!("channel.{channel_id}.buzzed");
+            let _ = nats.publish(subject, payload.into()).await;
+            info!(%user_id, %channel_id, "buzzed channel");
             Ok(())
         }
     }

@@ -56,6 +56,7 @@ pub struct MeResponse {
     pub name: Option<String>,
     pub display_name: String,
     pub avatar_url: Option<String>,
+    pub notification_sound: Option<String>,
     pub created_at: OffsetDateTime,
 }
 
@@ -64,6 +65,7 @@ pub struct MeResponse {
 pub struct UpdateMeRequest {
     pub name: Option<String>,
     pub display_name: Option<String>,
+    pub notification_sound: Option<String>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -294,7 +296,7 @@ async fn me(
 
     let user = sqlx::query(
         r#"
-        select id, email, name, display_name, avatar_url, created_at
+        select id, email, name, display_name, avatar_url, notification_sound, created_at
         from users
         where id = $1
         "#,
@@ -318,6 +320,7 @@ async fn me(
             name: user.get("name"),
             display_name: user.get("display_name"),
             avatar_url: user.get("avatar_url"),
+            notification_sound: user.try_get("notification_sound").ok(),
             created_at: user.get("created_at"),
         }),
     )
@@ -338,8 +341,12 @@ async fn update_me(
         .display_name
         .map(|v| v.trim().to_string())
         .filter(|v| !v.is_empty());
+    let notification_sound = req
+        .notification_sound
+        .map(|v| v.trim().to_string())
+        .filter(|v| !v.is_empty());
 
-    if name.is_none() && display_name.is_none() {
+    if name.is_none() && display_name.is_none() && notification_sound.is_none() {
         return util::api_error(ApiErrorCode::ValidationError);
     }
 
@@ -348,13 +355,15 @@ async fn update_me(
         update users
         set
           name = coalesce($2, name),
-          display_name = coalesce($3, display_name)
+          display_name = coalesce($3, display_name),
+          notification_sound = coalesce($4, notification_sound)
         where id = $1
         "#,
     )
     .bind(auth.user_id)
     .bind(name)
     .bind(display_name)
+    .bind(notification_sound)
     .execute(&state.pool)
     .await;
 

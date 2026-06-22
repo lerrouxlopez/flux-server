@@ -147,7 +147,11 @@ async fn patch_user_override(
             serde_json::json!({
                 "org_id": org_id,
                 "mode": mode,
-                "profile_id": profile_id
+                "profile_id": profile_id,
+                "quiet_hours_enabled": false,
+                "quiet_from": null,
+                "quiet_to": null,
+                "quiet_priority_override": true
             })
             .to_string(),
         ))
@@ -203,17 +207,17 @@ async fn insert_profile(
     .await
     .unwrap();
 
-    for (rule, enabled) in rules {
+    for (rule, in_app) in rules {
         sqlx::query(
             r#"
-            insert into notification_profile_rules (profile_id, rule, enabled)
-            values ($1, $2, $3)
-            on conflict (profile_id, rule) do update set enabled = excluded.enabled
+            insert into notification_profile_rules (profile_id, rule, in_app, desktop, sound)
+            values ($1, $2, $3, false, false)
+            on conflict (profile_id, rule) do update set in_app = excluded.in_app
             "#,
         )
         .bind(id)
         .bind(*rule)
-        .bind(*enabled)
+        .bind(*in_app)
         .execute(pool)
         .await
         .unwrap();
@@ -252,6 +256,7 @@ async fn resolution_order_user_over_channel_over_mode_over_org_over_platform() {
     assert_eq!(
         ctx0.get("behavior")
             .and_then(|b| b.get("message_all"))
+            .and_then(|v| v.get("in_app"))
             .and_then(|v| v.as_bool()),
         Some(false)
     );
@@ -281,6 +286,7 @@ async fn resolution_order_user_over_channel_over_mode_over_org_over_platform() {
     assert_eq!(
         ctx1.get("behavior")
             .and_then(|b| b.get("message_mentions"))
+            .and_then(|v| v.get("in_app"))
             .and_then(|v| v.as_bool()),
         Some(false)
     );
@@ -310,6 +316,7 @@ async fn resolution_order_user_over_channel_over_mode_over_org_over_platform() {
     assert_eq!(
         ctx2.get("behavior")
             .and_then(|b| b.get("pin_changes"))
+            .and_then(|v| v.get("in_app"))
             .and_then(|v| v.as_bool()),
         Some(false)
     );
@@ -335,6 +342,7 @@ async fn resolution_order_user_over_channel_over_mode_over_org_over_platform() {
     assert_eq!(
         ctx3.get("behavior")
             .and_then(|b| b.get("pin_changes"))
+            .and_then(|v| v.get("in_app"))
             .and_then(|v| v.as_bool()),
         Some(true)
     );
@@ -360,6 +368,7 @@ async fn resolution_order_user_over_channel_over_mode_over_org_over_platform() {
     assert_eq!(
         ctx4.get("behavior")
             .and_then(|b| b.get("message_all"))
+            .and_then(|v| v.get("in_app"))
             .and_then(|v| v.as_bool()),
         Some(true)
     );

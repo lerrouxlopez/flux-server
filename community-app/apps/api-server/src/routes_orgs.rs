@@ -241,6 +241,7 @@ async fn create_org(
         | perms::ORG_INVITES_CREATE
         | perms::BRANDING_MANAGE
         | perms::ADMIN_AUDIT_LOG_VIEW
+        | perms::NOTIFICATIONS_MANAGE
         | perms::CHANNELS_VIEW
         | perms::CHANNELS_CREATE
         | perms::CHANNELS_MANAGE
