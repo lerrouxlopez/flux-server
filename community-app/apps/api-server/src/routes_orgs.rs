@@ -71,8 +71,21 @@ struct OrgResponse {
 }
 
 #[derive(Debug, Serialize)]
+struct OrgListItemResponse {
+    id: Uuid,
+    slug: String,
+    name: String,
+    description: Option<String>,
+    avatar_url: Option<String>,
+    banner_url: Option<String>,
+    join_policy: String,
+    member_count: i64,
+    created_at: OffsetDateTime,
+}
+
+#[derive(Debug, Serialize)]
 struct OrgsListResponse {
-    organizations: Vec<OrgResponse>,
+    organizations: Vec<OrgListItemResponse>,
 }
 
 #[derive(Debug, Serialize)]
@@ -1128,9 +1141,18 @@ async fn list_orgs(
 ) -> impl IntoResponse {
     let rows = sqlx::query(
         r#"
-        select o.id, o.slug, o.name, o.created_at
+        with member_counts as (
+          select organization_id, count(*)::bigint as c
+          from organization_members
+          group by organization_id
+        )
+        select
+          o.id, o.slug, o.name, o.description, o.avatar_url, o.banner_url,
+          o.join_policy, o.created_at,
+          coalesce(member_counts.c, 0) as member_count
         from organizations o
         join organization_members m on m.organization_id = o.id
+        left join member_counts on member_counts.organization_id = o.id
         where m.user_id = $1
         order by o.created_at desc
         "#,
@@ -1146,10 +1168,15 @@ async fn list_orgs(
 
     let organizations = rows
         .into_iter()
-        .map(|r| OrgResponse {
+        .map(|r| OrgListItemResponse {
             id: r.get("id"),
             slug: r.get("slug"),
             name: r.get("name"),
+            description: r.try_get("description").ok(),
+            avatar_url: r.try_get("avatar_url").ok(),
+            banner_url: r.try_get("banner_url").ok(),
+            join_policy: r.get("join_policy"),
+            member_count: r.get("member_count"),
             created_at: r.get("created_at"),
         })
         .collect();
