@@ -1,0 +1,30 @@
+[package]
+name = "lorelei-eval"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+
+[dependencies]
+lorelei-core = { path = "../lorelei-core" }
+lorelei-song = { path = "../lorelei-song" }
+lorelei-lore = { path = "../lorelei-lore" }
+lorelei-echo = { path = "../lorelei-echo" }
+lorelei-siren = { path = "../lorelei-siren" }
+lorelei-shells = { path = "../lorelei-shells" }
+lorelei-tide = { path = "../lorelei-tide" }
+lorelei-harbor = { path = "../../apps/lorelei-harbor" }
+serde.workspace = true
+serde_json.workspace = true
+serde_yaml = "0.9"
+tokio.workspace = true
+uuid = { workspace = true, features = ["v4"] }
+chrono.workspace = true
+sqlx = { workspace = true, features = ["chrono", "macros"] }
+qdrant-client.workspace = true
+axum.workspace = true
+async-trait.workspace = true
+tower.workspace = true
+hyper = "1"
+futures.workspace = true
+tracing.workspace = true
+tracing-subscriber.workspace = true

@@ -1,0 +1,28 @@
+[package]
+name = "lorelei-cli"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+
+[dependencies]
+clap.workspace = true
+dotenvy.workspace = true
+qdrant-client.workspace = true
+reqwest = { workspace = true, default-features = false, features = ["json", "rustls-tls"] }
+serde.workspace = true
+serde_json.workspace = true
+sqlx = { workspace = true, features = ["macros"] }
+tokio.workspace = true
+uuid.workspace = true
+lorelei-core = { path = "../../crates/lorelei-core" }
+lorelei-echo = { path = "../../crates/lorelei-echo" }
+lorelei-lore = { path = "../../crates/lorelei-lore" }
+lorelei-song = { path = "../../crates/lorelei-song" }
+
+[[bin]]
+name = "lore"
+path = "src/main.rs"
+
+[dev-dependencies]
+httpmock = "0.7"
+tempfile = "3"

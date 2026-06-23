@@ -1,0 +1,37 @@
+[package]
+name = "lorelei-harbor"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+
+[dependencies]
+async-trait.workspace = true
+axum.workspace = true
+dotenvy.workspace = true
+chrono.workspace = true
+clap.workspace = true
+qdrant-client.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+sqlx = { workspace = true, features = ["chrono", "macros"] }
+tokio.workspace = true
+tower-http.workspace = true
+tracing.workspace = true
+tracing-subscriber.workspace = true
+uuid.workspace = true
+lorelei-core = { path = "../../crates/lorelei-core" }
+lorelei-echo = { path = "../../crates/lorelei-echo" }
+lorelei-lore = { path = "../../crates/lorelei-lore" }
+lorelei-shells = { path = "../../crates/lorelei-shells" }
+lorelei-siren = { path = "../../crates/lorelei-siren" }
+lorelei-song = { path = "../../crates/lorelei-song" }
+lorelei-tide = { path = "../../crates/lorelei-tide" }
+
+[[bin]]
+name = "lorelei-harbor"
+path = "src/main.rs"
+
+[dev-dependencies]
+tower.workspace = true
+hyper = "1"
+futures.workspace = true

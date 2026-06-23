@@ -5,6 +5,7 @@ use axum::{
 };
 use redis::AsyncCommands;
 use sqlx::PgPool;
+use std::sync::Arc;
 use uuid::Uuid;
 
 pub mod app;
@@ -17,6 +18,7 @@ pub mod routes_branding;
 pub mod routes_channels;
 pub mod routes_dms;
 pub mod routes_friends;
+pub mod routes_lorelei;
 pub mod routes_media;
 pub mod routes_messages;
 pub mod routes_notifications;
@@ -24,6 +26,14 @@ pub mod routes_orgs;
 pub mod routes_threads;
 pub mod util;
 pub mod readiness;
+
+/// Lorelei integration state. `None` when `LORELEI_HARBOR_URL`/`LORELEI_CREDENTIALS_KEY`
+/// aren't set — every Lorelei-aware route treats that as "feature unavailable" rather than
+/// erroring, so dev/test environments that don't care about Lorelei are unaffected.
+pub struct LoreleiRuntime {
+    pub harbor: lorelei_bridge::HarborClient,
+    pub credentials_key: secrets::CredentialsKey,
+}
 
 #[derive(Clone)]
 pub struct AppState {
@@ -35,6 +45,7 @@ pub struct AppState {
     pub(crate) livekit_url_public: String,
     pub(crate) livekit_api_key: String,
     pub(crate) livekit_api_secret: String,
+    pub(crate) lorelei: Option<Arc<LoreleiRuntime>>,
 }
 
 impl AppState {
@@ -57,7 +68,23 @@ impl AppState {
             livekit_url_public,
             livekit_api_key,
             livekit_api_secret,
+            lorelei: None,
         }
+    }
+
+    /// Enables the Lorelei integration on an already-constructed state. Additive — does not
+    /// change `new()`'s signature, so existing callers (including every integration test)
+    /// are unaffected.
+    pub fn with_lorelei(
+        mut self,
+        harbor: lorelei_bridge::HarborClient,
+        credentials_key: secrets::CredentialsKey,
+    ) -> Self {
+        self.lorelei = Some(Arc::new(LoreleiRuntime {
+            harbor,
+            credentials_key,
+        }));
+        self
     }
 }
 

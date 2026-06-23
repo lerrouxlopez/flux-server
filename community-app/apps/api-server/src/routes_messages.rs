@@ -418,6 +418,10 @@ async fn send_message(
         error!(error = %err, "failed to publish message.created");
     }
 
+    if let Some(b) = body.as_deref() {
+        crate::routes_lorelei::maybe_trigger_reply(&state, org_id, channel_id, auth.user_id, b).await;
+    }
+
     (
         StatusCode::OK,
         Json(MessageResponse {

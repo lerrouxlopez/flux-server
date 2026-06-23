@@ -1,0 +1,18 @@
+[package]
+name = "lorelei-echo"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+
+[dependencies]
+async-trait.workspace = true
+chrono.workspace = true
+lorelei-core = { path = "../lorelei-core" }
+lorelei-lore = { path = "../lorelei-lore" }
+tracing.workspace = true
+uuid = { workspace = true, features = ["v4"] }
+
+[dev-dependencies]
+qdrant-client.workspace = true
+sqlx = { workspace = true, features = ["macros"] }
+tokio.workspace = true

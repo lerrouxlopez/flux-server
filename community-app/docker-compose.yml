@@ -9,6 +9,11 @@ services:
       - "5432:5432"
     volumes:
       - postgres_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U app -d community_app"]
+      interval: 5s
+      timeout: 5s
+      retries: 12
 
   redis:
     image: redis:7
@@ -39,6 +44,101 @@ services:
       - "7881:7881"
       - "7882:7882/udp"
 
+  qdrant:
+    image: qdrant/qdrant:v1.18.0
+    ports:
+      - "6333:6333"
+      - "6334:6334"
+    volumes:
+      - qdrant_data:/qdrant/storage
+    healthcheck:
+      # qdrant image doesn't include curl/wget; use a bash TCP probe instead.
+      test: ["CMD-SHELL", "bash -lc 'exec 3<>/dev/tcp/127.0.0.1/6333'"]
+      interval: 5s
+      timeout: 5s
+      retries: 12
+
+  ollama:
+    image: ollama/ollama:latest
+    profiles: ["ollama"]
+    ports:
+      - "11434:11434"
+    volumes:
+      - ollama_data:/root/.ollama
+    healthcheck:
+      test: ["CMD", "ollama", "list"]
+      interval: 10s
+      timeout: 5s
+      retries: 12
+
+  ollama-pull:
+    image: curlimages/curl:8.12.1
+    profiles: ["ollama"]
+    depends_on:
+      ollama:
+        condition: service_healthy
+    # Pulls the small default chat + embedding models so Lorelei works out-of-the-box.
+    # Slow on first run; cached in the ollama_data volume afterward.
+    command:
+      [
+        "sh",
+        "-lc",
+        "curl -fsS http://ollama:11434/api/pull -H 'Content-Type: application/json' -d '{\"name\":\"llama3.2:3b\"}' && curl -fsS http://ollama:11434/api/pull -H 'Content-Type: application/json' -d '{\"name\":\"nomic-embed-text\"}'",
+      ]
+
+  lorelei-migrate:
+    build:
+      context: .
+      dockerfile: Dockerfile.lorelei-harbor
+    depends_on:
+      postgres:
+        condition: service_healthy
+      qdrant:
+        condition: service_healthy
+    environment:
+      DATABASE_URL: "postgres://app:app@postgres:5432/community_app?options=-c%20search_path%3Dlorelei"
+      QDRANT_URL: http://qdrant:6334
+      LORELEI_MOCK_API_KEY: dev-mock-key
+      LORELEI_LOCAL_API_KEY: dev-local-key
+      RUST_LOG: info
+    command: ["lorelei-harbor", "migrate"]
+
+  lorelei-harbor:
+    build:
+      context: .
+      dockerfile: Dockerfile.lorelei-harbor
+    depends_on:
+      lorelei-migrate:
+        condition: service_completed_successfully
+    environment:
+      DATABASE_URL: "postgres://app:app@postgres:5432/community_app?options=-c%20search_path%3Dlorelei"
+      QDRANT_URL: http://qdrant:6334
+      LORELEI_MOCK_API_KEY: dev-mock-key
+      LORELEI_LOCAL_API_KEY: dev-local-key
+      RUST_LOG: info
+    ports:
+      - "8090:8080"
+    healthcheck:
+      test: ["CMD", "wget", "-qO-", "http://localhost:8080/healthz"]
+      interval: 5s
+      timeout: 5s
+      retries: 12
+
+  lorelei-worker:
+    build:
+      context: .
+      dockerfile: Dockerfile.lorelei-harbor
+    depends_on:
+      lorelei-migrate:
+        condition: service_completed_successfully
+    environment:
+      DATABASE_URL: "postgres://app:app@postgres:5432/community_app?options=-c%20search_path%3Dlorelei"
+      QDRANT_URL: http://qdrant:6334
+      LORELEI_MOCK_API_KEY: dev-mock-key
+      LORELEI_LOCAL_API_KEY: dev-local-key
+      RUST_LOG: info
+    command: ["lorelei-harbor", "worker"]
+
   api-server:
     build:
       context: .
@@ -48,6 +148,7 @@ services:
       - redis
       - nats
       - livekit
+      - lorelei-harbor
     environment:
       APP_ENV: local
       HTTP_ADDR: 0.0.0.0:8080
@@ -63,6 +164,8 @@ services:
       LIVEKIT_URL_PUBLIC: http://localhost:7880
       LIVEKIT_API_KEY: devkey
       LIVEKIT_API_SECRET: secret
+      LORELEI_HARBOR_URL: http://lorelei-harbor:8080
+      LORELEI_CREDENTIALS_KEY: "FiMHXZiC2EetxD2ZHiOBf4vDhkcuG9goO0/06fKR5gQ=" # dev only, rotate for real deployments
     ports:
       - "8080:8080"
 
@@ -128,3 +231,5 @@ services:
 
 volumes:
   postgres_data:
+  qdrant_data:
+  ollama_data:
