@@ -43,26 +43,21 @@ struct UserSummary {
     id: Uuid,
     email: String,
     display_name: String,
+    avatar_url: Option<String>,
 }
 
 #[derive(Debug, Serialize)]
 struct FriendRequestResponse {
     id: Uuid,
-    requester: UserSummary,
-    addressee: UserSummary,
+    #[serde(rename = "org_id")]
+    organization_id: Uuid,
+    from_user_id: Uuid,
+    to_user_id: Uuid,
+    from_user: UserSummary,
+    to_user: UserSummary,
     status: String,
     created_at: OffsetDateTime,
     responded_at: Option<OffsetDateTime>,
-}
-
-#[derive(Debug, Serialize)]
-struct FriendRequestsResponse {
-    requests: Vec<FriendRequestResponse>,
-}
-
-#[derive(Debug, Serialize)]
-struct FriendsResponse {
-    friends: Vec<UserSummary>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -89,6 +84,7 @@ async fn list_requests(
         r#"
         select
           fr.id,
+          fr.organization_id,
           fr.requester_id,
           fr.addressee_id,
           fr.status,
@@ -96,8 +92,10 @@ async fn list_requests(
           fr.responded_at,
           ru.email as requester_email,
           ru.display_name as requester_display_name,
+          ru.avatar_url as requester_avatar_url,
           au.email as addressee_email,
-          au.display_name as addressee_display_name
+          au.display_name as addressee_display_name,
+          au.avatar_url as addressee_avatar_url
         from friend_requests fr
         join users ru on ru.id = fr.requester_id
         join users au on au.id = fr.addressee_id
@@ -121,15 +119,20 @@ async fn list_requests(
     for r in rows.iter() {
         requests.push(FriendRequestResponse {
             id: r.get("id"),
-            requester: UserSummary {
+            organization_id: r.get("organization_id"),
+            from_user_id: r.get("requester_id"),
+            to_user_id: r.get("addressee_id"),
+            from_user: UserSummary {
                 id: r.get("requester_id"),
                 email: r.get("requester_email"),
                 display_name: r.get("requester_display_name"),
+                avatar_url: r.get("requester_avatar_url"),
             },
-            addressee: UserSummary {
+            to_user: UserSummary {
                 id: r.get("addressee_id"),
                 email: r.get("addressee_email"),
                 display_name: r.get("addressee_display_name"),
+                avatar_url: r.get("addressee_avatar_url"),
             },
             status: r.get("status"),
             created_at: r.get("created_at"),
@@ -137,7 +140,7 @@ async fn list_requests(
         });
     }
 
-    (StatusCode::OK, Json(FriendRequestsResponse { requests })).into_response()
+    (StatusCode::OK, Json(requests)).into_response()
 }
 
 async fn list_friends(
@@ -159,7 +162,8 @@ async fn list_friends(
         select
           u.id as other_id,
           u.email as other_email,
-          u.display_name as other_display_name
+          u.display_name as other_display_name,
+          u.avatar_url as other_avatar_url
         from friend_requests fr
         join users u
           on u.id = case
@@ -188,10 +192,11 @@ async fn list_friends(
             id: r.get("other_id"),
             email: r.get("other_email"),
             display_name: r.get("other_display_name"),
+            avatar_url: r.get("other_avatar_url"),
         });
     }
 
-    (StatusCode::OK, Json(FriendsResponse { friends })).into_response()
+    (StatusCode::OK, Json(friends)).into_response()
 }
 
 async fn create_request(

@@ -30,10 +30,7 @@ pub fn build_app(cfg: &config::AppConfig, state: AppState) -> Router {
             "/auth",
             crate::routes_auth::router().merge(crate::routes_lorelei::me_router()),
         )
-        .nest(
-            "/orgs",
-            crate::routes_orgs::router().merge(crate::routes_lorelei::org_router()),
-        )
+        .nest("/orgs", crate::routes_orgs::router())
         .merge(crate::routes_audit::router())
         .merge(crate::routes_attachments::router())
         .merge(crate::routes_channels::router())

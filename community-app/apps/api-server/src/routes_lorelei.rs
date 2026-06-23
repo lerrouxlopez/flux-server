@@ -1,12 +1,14 @@
-//! Admin control over which org channels Lorelei is added to, per-user BYO LLM credentials/
-//! preferences, the personal-PM start endpoint, and the message-route hook that triggers a
-//! reply.
+//! Per-user BYO LLM credentials/preferences, and the message-route hook that triggers a
+//! Lorelei reply.
 //!
-//! Lorelei is a single global user (`lorelei_bridge::LORELEI_USER_ID`), not a bot per org —
-//! see `LORELEI_BUILDPLAN.md` (flux frontend repo) Section 0 for the full redesign. This file
-//! is the only place in `api-server` that touches `org_lorelei_settings`,
-//! `org_lorelei_channels`, `user_llm_credentials`, `user_lorelei_preferences`, or
-//! `user_lorelei_threads`.
+//! Lorelei is a single global user (`lorelei_bridge::LORELEI_USER_ID`) — there is no admin
+//! UI for her at all. Two ways to reach her:
+//! - **PM her directly** — she's a normal member of every org, so the existing friend/DM
+//!   flow (`routes_dms.rs`) works on her exactly like it does on anyone else.
+//! - **@mention her in any regular channel, as the org owner** — see `maybe_trigger_reply`.
+//!
+//! This file is the only place in `api-server` that touches `org_lorelei_settings`,
+//! `user_llm_credentials`, or `user_lorelei_preferences`.
 
 use crate::{util, AppState, AuthContext};
 use api::ApiErrorCode;
@@ -14,12 +16,11 @@ use axum::{
     extract::{Json, Path, State},
     http::StatusCode,
     response::IntoResponse,
-    routing::{delete, get, post, put},
+    routing::{get, put},
     Router,
 };
 use events::envelope::EventEnvelope;
 use lorelei_bridge::LORELEI_USER_ID;
-use permissions::Permission;
 use serde::{Deserialize, Serialize};
 use sqlx::{PgPool, Row};
 use time::OffsetDateTime;
@@ -27,20 +28,6 @@ use uuid::Uuid;
 
 const VALID_PROVIDERS: [&str; 3] = ["ollama", "openai", "anthropic"];
 const VALID_CREDENTIAL_PROVIDERS: [&str; 2] = ["openai", "anthropic"];
-
-/// Mounted under `/orgs` in `app.rs` (merged alongside `routes_orgs::router()`).
-pub fn org_router() -> Router<AppState> {
-    Router::new()
-        .route(
-            "/{org_id}/lorelei/channels",
-            get(list_channels).post(add_channel),
-        )
-        .route(
-            "/{org_id}/lorelei/channels/{channel_id}",
-            delete(remove_channel),
-        )
-        .route("/{org_id}/lorelei/pm", post(start_pm))
-}
 
 /// Mounted under `/auth` in `app.rs` (merged alongside `routes_auth::router()`).
 pub fn me_router() -> Router<AppState> {
@@ -54,193 +41,6 @@ pub fn me_router() -> Router<AppState> {
             "/me/lorelei-preferences",
             get(get_preferences).patch(update_preferences),
         )
-}
-
-// ---------------------------------------------------------------------------
-// Personal PM
-// ---------------------------------------------------------------------------
-
-/// Starts (or resumes) the caller's personal DM thread with Lorelei in this org. Idempotent —
-/// reuses the existing channel/tenant/agent on every call after the first. Unlike a normal
-/// DM start, no friend-request relationship is required; you don't need to "friend" an AI
-/// assistant to talk to it.
-async fn start_pm(
-    State(state): State<AppState>,
-    auth: AuthContext,
-    Path(org_id): Path<Uuid>,
-) -> impl IntoResponse {
-    match util::is_member(&state.pool, org_id, auth.user_id).await {
-        Ok(true) => {}
-        Ok(false) => return util::api_error(ApiErrorCode::PermissionDenied),
-        Err(e) => return e,
-    }
-
-    match lorelei_bridge::load_or_create_user_thread(&state.pool, auth.user_id, org_id).await {
-        Ok(thread) => (
-            StatusCode::OK,
-            Json(serde_json::json!({ "channel_id": thread.dm_channel_id })),
-        )
-            .into_response(),
-        Err(e) => {
-            tracing::error!(error = %e, "failed to start lorelei pm");
-            util::api_error(ApiErrorCode::InternalError)
-        }
-    }
-}
-
-// ---------------------------------------------------------------------------
-// Admin-extended channel availability
-// ---------------------------------------------------------------------------
-
-#[derive(Debug, Serialize)]
-struct LoreleiChannelResponse {
-    channel_id: Uuid,
-    channel_name: String,
-    enabled_by: Uuid,
-    created_at: OffsetDateTime,
-}
-
-async fn list_channels(
-    State(state): State<AppState>,
-    auth: AuthContext,
-    Path(org_id): Path<Uuid>,
-) -> impl IntoResponse {
-    match util::can(&state.pool, auth.user_id, org_id, Permission::LoreleiManage).await {
-        Ok(true) => {}
-        Ok(false) => return util::api_error(ApiErrorCode::PermissionDenied),
-        Err(e) => return e,
-    }
-
-    let rows = sqlx::query(
-        "select c.id as channel_id, c.name as channel_name, oc.enabled_by, oc.created_at \
-         from org_lorelei_channels oc \
-         join channels c on c.id = oc.channel_id \
-         where oc.organization_id = $1 \
-         order by oc.created_at asc",
-    )
-    .bind(org_id)
-    .fetch_all(&state.pool)
-    .await;
-
-    let rows = match rows {
-        Ok(v) => v,
-        Err(_) => return util::api_error(ApiErrorCode::InternalError),
-    };
-
-    let out: Vec<LoreleiChannelResponse> = rows
-        .iter()
-        .map(|r| LoreleiChannelResponse {
-            channel_id: r.get("channel_id"),
-            channel_name: r.get("channel_name"),
-            enabled_by: r.get("enabled_by"),
-            created_at: r.get("created_at"),
-        })
-        .collect();
-
-    (StatusCode::OK, Json(out)).into_response()
-}
-
-#[derive(Debug, Deserialize)]
-struct AddChannelRequest {
-    channel_id: Uuid,
-}
-
-async fn add_channel(
-    State(state): State<AppState>,
-    auth: AuthContext,
-    Path(org_id): Path<Uuid>,
-    Json(req): Json<AddChannelRequest>,
-) -> impl IntoResponse {
-    match util::can(&state.pool, auth.user_id, org_id, Permission::LoreleiManage).await {
-        Ok(true) => {}
-        Ok(false) => return util::api_error(ApiErrorCode::PermissionDenied),
-        Err(e) => return e,
-    }
-
-    let channel_org: Option<Uuid> =
-        match sqlx::query_scalar("select organization_id from channels where id = $1")
-            .bind(req.channel_id)
-            .fetch_optional(&state.pool)
-            .await
-        {
-            Ok(v) => v,
-            Err(_) => return util::api_error(ApiErrorCode::InternalError),
-        };
-    if channel_org != Some(org_id) {
-        return util::api_error(ApiErrorCode::NotFound);
-    }
-
-    // Lazily provisions the org's Lorelei tenant/agent on the very first channel added.
-    if let Err(e) = lorelei_bridge::provision_org_lorelei(&state.pool, org_id).await {
-        tracing::error!(error = %e, "failed to provision org lorelei tenant/agent");
-        return util::api_error(ApiErrorCode::InternalError);
-    }
-
-    let inserted = sqlx::query(
-        "insert into org_lorelei_channels (id, organization_id, channel_id, enabled_by, created_at) \
-         values ($1, $2, $3, $4, now()) \
-         on conflict (organization_id, channel_id) do nothing",
-    )
-    .bind(Uuid::now_v7())
-    .bind(org_id)
-    .bind(req.channel_id)
-    .bind(auth.user_id)
-    .execute(&state.pool)
-    .await;
-
-    if inserted.is_err() {
-        return util::api_error(ApiErrorCode::InternalError);
-    }
-
-    util::write_audit_log(
-        &state.pool,
-        org_id,
-        Some(auth.user_id),
-        "lorelei.channel_added",
-        Some("channel"),
-        Some(req.channel_id),
-        serde_json::json!({}),
-    )
-    .await;
-
-    StatusCode::NO_CONTENT.into_response()
-}
-
-async fn remove_channel(
-    State(state): State<AppState>,
-    auth: AuthContext,
-    Path((org_id, channel_id)): Path<(Uuid, Uuid)>,
-) -> impl IntoResponse {
-    match util::can(&state.pool, auth.user_id, org_id, Permission::LoreleiManage).await {
-        Ok(true) => {}
-        Ok(false) => return util::api_error(ApiErrorCode::PermissionDenied),
-        Err(e) => return e,
-    }
-
-    let res = sqlx::query(
-        "delete from org_lorelei_channels where organization_id = $1 and channel_id = $2",
-    )
-    .bind(org_id)
-    .bind(channel_id)
-    .execute(&state.pool)
-    .await;
-
-    if res.is_err() {
-        return util::api_error(ApiErrorCode::InternalError);
-    }
-
-    util::write_audit_log(
-        &state.pool,
-        org_id,
-        Some(auth.user_id),
-        "lorelei.channel_removed",
-        Some("channel"),
-        Some(channel_id),
-        serde_json::json!({}),
-    )
-    .await;
-
-    StatusCode::NO_CONTENT.into_response()
 }
 
 // ---------------------------------------------------------------------------
@@ -457,13 +257,22 @@ async fn update_preferences(
 // Message-route hook (called from `routes_messages::send_message`)
 // ---------------------------------------------------------------------------
 
+/// Mention detection is a simple substring heuristic (`@lorelei`, case-insensitive) — same
+/// pragmatic approach the existing notification-sound mention check uses
+/// (`apps/shell-web/src/realtime/notificationSoundEffects.ts` in the flux repo). Not a real
+/// parser; good enough for "does this message address her".
+fn mentions_lorelei(body: &str) -> bool {
+    body.to_lowercase().contains("@lorelei")
+}
+
 /// Two trigger paths:
-/// - **PM**: `channel_id` is a DM channel that includes the global Lorelei user as a member.
-///   Any member can do this (same as messaging any other user) — runs use the *sender's own*
-///   resolved provider/credential, in the sender's personal per-(user, org) memory scope.
-/// - **Org channel**: `channel_id` is in `org_lorelei_channels`. Requires
-///   `LORELEI_INVOKE_CHANNEL`. Runs use the *org owner's* resolved provider/credential, in the
-///   org's shared memory scope.
+/// - **PM**: `channel_id` is a DM channel that includes the global Lorelei user as a member
+///   (reached via the normal friend/DM flow — no special-casing there). Any member can do
+///   this. Runs use the *sender's own* resolved provider/credential, in the sender's personal
+///   per-(user, org) memory scope.
+/// - **Org channel**: any non-DM channel, if the message contains `@lorelei` *and* the sender
+///   is the org's owner. Runs use the *owner's* (== sender's) resolved provider/credential,
+///   in the org's shared memory scope.
 ///
 /// Cheap to call on every message send — the eligibility check is 1-2 indexed point lookups;
 /// the actual LLM call happens in a spawned task so it never delays the sender's own response.
@@ -522,44 +331,32 @@ pub(crate) async fn maybe_trigger_reply(
         return;
     }
 
-    let is_extended: Option<i32> = sqlx::query_scalar(
-        "select 1 from org_lorelei_channels where organization_id = $1 and channel_id = $2",
-    )
-    .bind(org_id)
-    .bind(channel_id)
-    .fetch_optional(&state.pool)
-    .await
-    .ok()
-    .flatten();
-    if is_extended.is_none() {
+    if !mentions_lorelei(body) {
         return;
-    }
-    match util::can(&state.pool, sender_user_id, org_id, Permission::LoreleiInvokeChannel).await {
-        Ok(true) => {}
-        _ => return,
     }
 
-    let owner_id: Option<Uuid> = sqlx::query_scalar(
-        "select user_id from organization_members where organization_id = $1 and role = 'owner' limit 1",
+    let role: Option<String> = sqlx::query_scalar(
+        "select role from organization_members where organization_id = $1 and user_id = $2",
     )
     .bind(org_id)
+    .bind(sender_user_id)
     .fetch_optional(&state.pool)
     .await
     .ok()
     .flatten();
-    let Some(owner_id) = owner_id else {
+    if role.as_deref() != Some("owner") {
         return;
-    };
+    }
 
     tokio::spawn(async move {
-        let org = match lorelei_bridge::load_org_lorelei(&pool, org_id).await {
+        let org = match lorelei_bridge::provision_org_lorelei(&pool, org_id).await {
             Ok(o) => o,
             Err(e) => {
-                tracing::error!(error = %e, "org channel lorelei tenant/agent missing");
+                tracing::error!(error = %e, "failed to provision org lorelei tenant/agent");
                 return;
             }
         };
-        run_and_reply(&pool, &nats, &lorelei, org_id, channel_id, org.tenant_id, org.agent_id, owner_id, input).await;
+        run_and_reply(&pool, &nats, &lorelei, org_id, channel_id, org.tenant_id, org.agent_id, sender_user_id, input).await;
     });
 }
 

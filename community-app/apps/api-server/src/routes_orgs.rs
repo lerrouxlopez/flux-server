@@ -254,9 +254,7 @@ async fn create_org(
         | perms::VOICE_JOIN
         | perms::VOICE_SPEAK
         | perms::VIDEO_START
-        | perms::SCREEN_SHARE
-        | perms::LORELEI_MANAGE
-        | perms::LORELEI_INVOKE_CHANNEL;
+        | perms::SCREEN_SHARE;
 
     let moderator_permissions: Perms = perms::CHANNELS_VIEW
         | perms::MESSAGES_SEND
