@@ -49,6 +49,11 @@ struct ChannelResponse {
     kind: String,
     experience_mode_hint: Option<String>,
     created_by: Option<Uuid>,
+    // Org-seeded channels (General/Announcements/Reports/Voice) have no
+    // created_by -- the client uses this to hide rename/delete affordances
+    // for them rather than inferring it from name, which a user could spoof
+    // by naming a new channel "General".
+    is_default: bool,
     created_at: OffsetDateTime,
 }
 
@@ -103,14 +108,18 @@ async fn list_org_channels(
 
     let channels = rows
         .into_iter()
-        .map(|r| ChannelResponse {
-            id: r.get("id"),
-            organization_id: r.get("organization_id"),
-            name: r.get("name"),
-            kind: r.get("kind"),
-            experience_mode_hint: r.try_get("experience_mode_hint").ok(),
-            created_by: r.try_get("created_by").ok(),
-            created_at: r.get("created_at"),
+        .map(|r| {
+            let created_by: Option<Uuid> = r.try_get("created_by").ok();
+            ChannelResponse {
+                id: r.get("id"),
+                organization_id: r.get("organization_id"),
+                name: r.get("name"),
+                kind: r.get("kind"),
+                experience_mode_hint: r.try_get("experience_mode_hint").ok(),
+                is_default: created_by.is_none(),
+                created_by,
+                created_at: r.get("created_at"),
+            }
         })
         .collect();
 
@@ -192,6 +201,7 @@ async fn create_channel(
                     kind,
                     experience_mode_hint: hint,
                     created_by: Some(auth.user_id),
+                    is_default: false,
                     created_at: now,
                 }),
             )
@@ -234,6 +244,7 @@ async fn get_channel(
         return util::api_error(ApiErrorCode::PermissionDenied);
     }
 
+    let created_by: Option<Uuid> = row.try_get("created_by").ok();
     (
         StatusCode::OK,
         Json(ChannelResponse {
@@ -242,7 +253,8 @@ async fn get_channel(
             name: row.get("name"),
             kind: row.get("kind"),
             experience_mode_hint: row.try_get("experience_mode_hint").ok(),
-            created_by: row.try_get("created_by").ok(),
+            is_default: created_by.is_none(),
+            created_by,
             created_at: row.get("created_at"),
         }),
     )
@@ -285,6 +297,12 @@ async fn update_channel(
     let can_manage = permissions::has(perms, perms::CHANNELS_MANAGE);
     if kind == "dm" || (!can_manage && !is_creator) {
         return util::api_error(ApiErrorCode::PermissionDenied);
+    }
+    if created_by.is_none() {
+        return util::api_error_msg(
+            ApiErrorCode::ValidationError,
+            "Default channels cannot be renamed.",
+        );
     }
 
     let name = req
@@ -367,6 +385,12 @@ async fn delete_channel(
     let can_manage = permissions::has(perms, perms::CHANNELS_MANAGE);
     if kind == "dm" || (!can_manage && !is_creator) {
         return util::api_error(ApiErrorCode::PermissionDenied);
+    }
+    if created_by.is_none() {
+        return util::api_error_msg(
+            ApiErrorCode::ValidationError,
+            "Default channels cannot be deleted.",
+        );
     }
 
     let deleted = sqlx::query(r#"delete from channels where id = $1"#)
