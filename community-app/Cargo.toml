@@ -4,6 +4,8 @@ members = [
   "apps/api-server",
   "apps/realtime-gateway",
   "apps/worker",
+  "apps/lorelei-harbor",
+  "apps/lorelei-cli",
   "crates/api",
   "crates/auth",
   "crates/branding",
@@ -17,7 +19,17 @@ members = [
   "crates/orgs",
   "crates/permissions",
   "crates/realtime",
+  "crates/secrets",
   "crates/telemetry",
+  "crates/lorelei-bridge",
+  "crates/lorelei-core",
+  "crates/lorelei-song",
+  "crates/lorelei-lore",
+  "crates/lorelei-echo",
+  "crates/lorelei-shells",
+  "crates/lorelei-siren",
+  "crates/lorelei-tide",
+  "crates/lorelei-eval",
 ]
 
 [workspace.package]
@@ -70,3 +82,13 @@ futures-util = "0.3"
 metrics = "0.23"
 metrics-exporter-prometheus = "0.15"
 once_cell = "1"
+
+# Lorelei integration (see LORELEI_BUILDPLAN.md in the flux frontend repo)
+async-trait = "0.1"
+chrono = { version = "0.4", features = ["serde"] }
+futures = "0.3"
+clap = { version = "4", features = ["derive"] }
+qdrant-client = "1.18"
+tracing-futures = "0.2"
+regex = "1"
+aes-gcm = "0.10"

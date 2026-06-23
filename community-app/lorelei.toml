@@ -1,0 +1,51 @@
+# Lorelei runtime config for the merged flux-server deployment.
+#
+# Only `mock` (tests) and `ollama` (the platform-wide free default) are registered here.
+# OpenAI/Anthropic are never statically configured — every BYO-key request goes through
+# `lorelei-bridge`'s dynamic `provider_override`, which constructs an ephemeral provider
+# per-request from the org/user's resolved credential. Registering them here would also
+# make lorelei-harbor fail to boot whenever their api_key_env isn't set (see
+# `ProviderRegistry::from_config`, which eagerly constructs every configured provider).
+
+[agent]
+tenant_id = "00000000-0000-0000-0000-000000000000"
+agent_id = "00000000-0000-0000-0000-000000000000"
+default_provider = "ollama"
+default_embedding_provider = "ollama"
+
+[harbor]
+host = "0.0.0.0"
+port = 8080
+
+[lore]
+postgres_url_env = "DATABASE_URL"
+qdrant_url_env = "QDRANT_URL"
+collection = "lorelei_ollama"
+
+[echo]
+top_k = 20
+rerank_top_k = 10
+min_confidence = 0.25
+
+[siren]
+require_approval_for_high_risk = true
+allow_shell_execution = true
+allow_network_tools = false
+
+[docs]
+# Document ingestion is disabled for the FLUX integration's v1 (no corpus to bundle yet).
+allowed_dirs = []
+
+[providers.mock]
+kind = "mock"
+base_url = "http://127.0.0.1:0"
+api_key_env = "LORELEI_MOCK_API_KEY"
+chat_model = "mock-chat"
+embedding_model = "mock-embed"
+
+[providers.ollama]
+kind = "local"
+base_url = "http://ollama:11434/v1"
+api_key_env = "LORELEI_LOCAL_API_KEY"
+chat_model = "llama3.2:3b"
+embedding_model = "nomic-embed-text"

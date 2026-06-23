@@ -31,6 +31,10 @@ pub mod perms {
     pub const VIDEO_START: Perms = 1 << 32;
     pub const SCREEN_SHARE: Perms = 1 << 33;
 
+    // --- Lorelei ---
+    pub const LORELEI_MANAGE: Perms = 1 << 40;
+    pub const LORELEI_INVOKE_CHANNEL: Perms = 1 << 41;
+
     // Back-compat aliases (older code)
     pub const ORGS_MANAGE: Perms = ORG_MANAGE;
     pub const ORGS_MEMBERS_MANAGE: Perms = ORG_MANAGE_MEMBERS;
@@ -70,6 +74,9 @@ pub enum Permission {
     VoiceSpeak,
     VideoStart,
     ScreenShare,
+
+    LoreleiManage,
+    LoreleiInvokeChannel,
 }
 
 impl Permission {
@@ -99,6 +106,9 @@ impl Permission {
             Permission::VoiceSpeak => VOICE_SPEAK,
             Permission::VideoStart => VIDEO_START,
             Permission::ScreenShare => SCREEN_SHARE,
+
+            Permission::LoreleiManage => LORELEI_MANAGE,
+            Permission::LoreleiInvokeChannel => LORELEI_INVOKE_CHANNEL,
         }
     }
 }

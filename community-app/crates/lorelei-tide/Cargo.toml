@@ -1,0 +1,26 @@
+[package]
+name = "lorelei-tide"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+
+[dependencies]
+async-trait.workspace = true
+lorelei-core = { path = "../lorelei-core" }
+serde_json.workspace = true
+serde.workspace = true
+uuid = { workspace = true, features = ["v4"] }
+chrono.workspace = true
+tokio.workspace = true
+tracing.workspace = true
+tracing-futures.workspace = true
+regex.workspace = true
+
+[dev-dependencies]
+futures.workspace = true
+lorelei-siren = { path = "../lorelei-siren" }
+lorelei-song = { path = "../lorelei-song" }
+lorelei-echo = { path = "../lorelei-echo" }
+lorelei-lore = { path = "../lorelei-lore" }
+qdrant-client.workspace = true
+sqlx = { workspace = true, features = ["chrono", "macros"] }

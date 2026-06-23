@@ -26,8 +26,14 @@ pub fn build_app(cfg: &config::AppConfig, state: AppState) -> Router {
     let cors = cors_layer(cfg);
 
     Router::new()
-        .nest("/auth", crate::routes_auth::router())
-        .nest("/orgs", crate::routes_orgs::router())
+        .nest(
+            "/auth",
+            crate::routes_auth::router().merge(crate::routes_lorelei::me_router()),
+        )
+        .nest(
+            "/orgs",
+            crate::routes_orgs::router().merge(crate::routes_lorelei::org_router()),
+        )
         .merge(crate::routes_audit::router())
         .merge(crate::routes_attachments::router())
         .merge(crate::routes_channels::router())
