@@ -1,9 +1,12 @@
-//! Lorelei admin settings, per-user BYO LLM credentials/preferences, and the hook that
-//! triggers a reply when a member messages a Lorelei-enabled channel.
+//! Admin control over which org channels Lorelei is added to, per-user BYO LLM credentials/
+//! preferences, the personal-PM start endpoint, and the message-route hook that triggers a
+//! reply.
 //!
-//! See `LORELEI_BUILDPLAN.md` (flux frontend repo) for the full design. This file is the
-//! only place in `api-server` that touches `org_lorelei_settings`, `org_lorelei_channels`,
-//! `user_llm_credentials`, or `user_lorelei_preferences`.
+//! Lorelei is a single global user (`lorelei_bridge::LORELEI_USER_ID`), not a bot per org —
+//! see `LORELEI_BUILDPLAN.md` (flux frontend repo) Section 0 for the full redesign. This file
+//! is the only place in `api-server` that touches `org_lorelei_settings`,
+//! `org_lorelei_channels`, `user_llm_credentials`, `user_lorelei_preferences`, or
+//! `user_lorelei_threads`.
 
 use crate::{util, AppState, AuthContext};
 use api::ApiErrorCode;
@@ -11,30 +14,23 @@ use axum::{
     extract::{Json, Path, State},
     http::StatusCode,
     response::IntoResponse,
-    routing::{delete, get, put},
+    routing::{delete, get, post, put},
     Router,
 };
 use events::envelope::EventEnvelope;
+use lorelei_bridge::LORELEI_USER_ID;
 use permissions::Permission;
 use serde::{Deserialize, Serialize};
 use sqlx::{PgPool, Row};
 use time::OffsetDateTime;
-use tracing::Span;
 use uuid::Uuid;
 
 const VALID_PROVIDERS: [&str; 3] = ["ollama", "openai", "anthropic"];
 const VALID_CREDENTIAL_PROVIDERS: [&str; 2] = ["openai", "anthropic"];
-const DEFAULT_DISPLAY_NAME: &str = "Lorelei";
-const DEFAULT_PROVIDER: &str = "ollama";
-const DEFAULT_MODEL: &str = "llama3.2:3b";
 
 /// Mounted under `/orgs` in `app.rs` (merged alongside `routes_orgs::router()`).
 pub fn org_router() -> Router<AppState> {
     Router::new()
-        .route(
-            "/{org_id}/lorelei/settings",
-            get(get_settings).patch(update_settings),
-        )
         .route(
             "/{org_id}/lorelei/channels",
             get(list_channels).post(add_channel),
@@ -43,6 +39,7 @@ pub fn org_router() -> Router<AppState> {
             "/{org_id}/lorelei/channels/{channel_id}",
             delete(remove_channel),
         )
+        .route("/{org_id}/lorelei/pm", post(start_pm))
 }
 
 /// Mounted under `/auth` in `app.rs` (merged alongside `routes_auth::router()`).
@@ -60,284 +57,35 @@ pub fn me_router() -> Router<AppState> {
 }
 
 // ---------------------------------------------------------------------------
-// Org settings
+// Personal PM
 // ---------------------------------------------------------------------------
 
-#[derive(Debug, Serialize)]
-struct OrgLoreleiSettingsResponse {
-    enabled: bool,
-    display_name: String,
-    default_provider: String,
-    default_model: String,
-}
-
-async fn get_settings(
+/// Starts (or resumes) the caller's personal DM thread with Lorelei in this org. Idempotent —
+/// reuses the existing channel/tenant/agent on every call after the first. Unlike a normal
+/// DM start, no friend-request relationship is required; you don't need to "friend" an AI
+/// assistant to talk to it.
+async fn start_pm(
     State(state): State<AppState>,
     auth: AuthContext,
     Path(org_id): Path<Uuid>,
 ) -> impl IntoResponse {
-    match util::can(&state.pool, auth.user_id, org_id, Permission::LoreleiManage).await {
+    match util::is_member(&state.pool, org_id, auth.user_id).await {
         Ok(true) => {}
         Ok(false) => return util::api_error(ApiErrorCode::PermissionDenied),
         Err(e) => return e,
     }
 
-    let row = sqlx::query(
-        "select enabled, display_name, default_provider, default_model \
-         from org_lorelei_settings where organization_id = $1",
-    )
-    .bind(org_id)
-    .fetch_optional(&state.pool)
-    .await;
-
-    let row = match row {
-        Ok(v) => v,
-        Err(_) => return util::api_error(ApiErrorCode::InternalError),
-    };
-
-    let resp = match row {
-        Some(r) => OrgLoreleiSettingsResponse {
-            enabled: r.get("enabled"),
-            display_name: r.get("display_name"),
-            default_provider: r.get("default_provider"),
-            default_model: r.get("default_model"),
-        },
-        None => OrgLoreleiSettingsResponse {
-            enabled: false,
-            display_name: DEFAULT_DISPLAY_NAME.to_string(),
-            default_provider: DEFAULT_PROVIDER.to_string(),
-            default_model: DEFAULT_MODEL.to_string(),
-        },
-    };
-
-    (StatusCode::OK, Json(resp)).into_response()
-}
-
-#[derive(Debug, Deserialize)]
-struct UpdateSettingsRequest {
-    #[serde(default)]
-    enabled: Option<bool>,
-    #[serde(default)]
-    display_name: Option<String>,
-    #[serde(default)]
-    default_provider: Option<String>,
-    #[serde(default)]
-    default_model: Option<String>,
-}
-
-async fn update_settings(
-    State(state): State<AppState>,
-    auth: AuthContext,
-    Path(org_id): Path<Uuid>,
-    Json(req): Json<UpdateSettingsRequest>,
-) -> impl IntoResponse {
-    Span::current().record("organization_id", tracing::field::display(org_id));
-
-    match util::can(&state.pool, auth.user_id, org_id, Permission::LoreleiManage).await {
-        Ok(true) => {}
-        Ok(false) => return util::api_error(ApiErrorCode::PermissionDenied),
-        Err(e) => return e,
-    }
-
-    if let Some(p) = &req.default_provider {
-        if !VALID_PROVIDERS.contains(&p.as_str()) {
-            return util::api_error(ApiErrorCode::ValidationError);
-        }
-    }
-    if let Some(n) = &req.display_name {
-        if n.trim().is_empty() || n.len() > 100 {
-            return util::api_error(ApiErrorCode::ValidationError);
-        }
-    }
-
-    let existing = sqlx::query(
-        "select enabled, display_name, default_provider, default_model, \
-                bot_user_id, lorelei_tenant_id, lorelei_agent_id, default_channel_id \
-         from org_lorelei_settings where organization_id = $1",
-    )
-    .bind(org_id)
-    .fetch_optional(&state.pool)
-    .await;
-    let existing = match existing {
-        Ok(v) => v,
-        Err(_) => return util::api_error(ApiErrorCode::InternalError),
-    };
-
-    let was_enabled = existing.as_ref().map(|r| r.get::<bool, _>("enabled")).unwrap_or(false);
-    let already_provisioned = existing
-        .as_ref()
-        .map(|r| r.get::<Option<Uuid>, _>("bot_user_id").is_some())
-        .unwrap_or(false);
-
-    let display_name = req.display_name.clone().unwrap_or_else(|| {
-        existing
-            .as_ref()
-            .map(|r| r.get::<String, _>("display_name"))
-            .unwrap_or_else(|| DEFAULT_DISPLAY_NAME.to_string())
-    });
-    let default_provider = req.default_provider.clone().unwrap_or_else(|| {
-        existing
-            .as_ref()
-            .map(|r| r.get::<String, _>("default_provider"))
-            .unwrap_or_else(|| DEFAULT_PROVIDER.to_string())
-    });
-    let default_model = req.default_model.clone().unwrap_or_else(|| {
-        existing
-            .as_ref()
-            .map(|r| r.get::<String, _>("default_model"))
-            .unwrap_or_else(|| DEFAULT_MODEL.to_string())
-    });
-    let enabled = req.enabled.unwrap_or(was_enabled);
-
-    let (bot_user_id, tenant_id, agent_id, default_channel_id): (
-        Option<Uuid>,
-        Option<Uuid>,
-        Option<Uuid>,
-        Option<Uuid>,
-    ) = if enabled && !already_provisioned {
-        match provision_org(&state.pool, org_id, &display_name).await {
-            Ok(v) => (Some(v.0), Some(v.1), Some(v.2), Some(v.3)),
-            Err(e) => return e,
-        }
-    } else {
-        (
-            existing.as_ref().and_then(|r| r.get("bot_user_id")),
-            existing.as_ref().and_then(|r| r.get("lorelei_tenant_id")),
-            existing.as_ref().and_then(|r| r.get("lorelei_agent_id")),
-            existing.as_ref().and_then(|r| r.get("default_channel_id")),
+    match lorelei_bridge::load_or_create_user_thread(&state.pool, auth.user_id, org_id).await {
+        Ok(thread) => (
+            StatusCode::OK,
+            Json(serde_json::json!({ "channel_id": thread.dm_channel_id })),
         )
-    };
-
-    let res = sqlx::query(
-        r#"
-        insert into org_lorelei_settings
-            (organization_id, enabled, display_name, default_provider, default_model,
-             bot_user_id, lorelei_tenant_id, lorelei_agent_id, default_channel_id, updated_at)
-        values ($1, $2, $3, $4, $5, $6, $7, $8, $9, now())
-        on conflict (organization_id) do update set
-            enabled = excluded.enabled,
-            display_name = excluded.display_name,
-            default_provider = excluded.default_provider,
-            default_model = excluded.default_model,
-            bot_user_id = coalesce(org_lorelei_settings.bot_user_id, excluded.bot_user_id),
-            lorelei_tenant_id = coalesce(org_lorelei_settings.lorelei_tenant_id, excluded.lorelei_tenant_id),
-            lorelei_agent_id = coalesce(org_lorelei_settings.lorelei_agent_id, excluded.lorelei_agent_id),
-            default_channel_id = coalesce(org_lorelei_settings.default_channel_id, excluded.default_channel_id),
-            updated_at = now()
-        "#,
-    )
-    .bind(org_id)
-    .bind(enabled)
-    .bind(&display_name)
-    .bind(&default_provider)
-    .bind(&default_model)
-    .bind(bot_user_id)
-    .bind(tenant_id)
-    .bind(agent_id)
-    .bind(default_channel_id)
-    .execute(&state.pool)
-    .await;
-
-    if res.is_err() {
-        return util::api_error(ApiErrorCode::InternalError);
+            .into_response(),
+        Err(e) => {
+            tracing::error!(error = %e, "failed to start lorelei pm");
+            util::api_error(ApiErrorCode::InternalError)
+        }
     }
-
-    // Renaming Lorelei is just a normal display_name update on its bot user row.
-    if let Some(bot_user_id) = bot_user_id {
-        let _ = sqlx::query("update users set display_name = $1 where id = $2")
-            .bind(&display_name)
-            .bind(bot_user_id)
-            .execute(&state.pool)
-            .await;
-    }
-
-    util::write_audit_log(
-        &state.pool,
-        org_id,
-        Some(auth.user_id),
-        "lorelei.settings_updated",
-        None,
-        None,
-        serde_json::json!({ "enabled": enabled, "default_provider": default_provider }),
-    )
-    .await;
-
-    (
-        StatusCode::OK,
-        Json(OrgLoreleiSettingsResponse {
-            enabled,
-            display_name,
-            default_provider,
-            default_model,
-        }),
-    )
-        .into_response()
-}
-
-/// First-enable side effects: bot user, org membership, and the dedicated channel. Tenant/
-/// agent IDs are minted client-side (Lorelei's `TenantId`/`AgentId` are opaque UUIDs with no
-/// registration table — see `LORELEI_BUILDPLAN.md` Section 2.3) and stored alongside.
-async fn provision_org(
-    pool: &PgPool,
-    org_id: Uuid,
-    display_name: &str,
-) -> Result<(Uuid, Uuid, Uuid, Uuid), axum::response::Response> {
-    let bot_user_id = Uuid::now_v7();
-    let tenant_id = Uuid::new_v4();
-    let agent_id = Uuid::new_v4();
-    let channel_id = Uuid::now_v7();
-    let now = OffsetDateTime::now_utc();
-    let bot_email = format!("lorelei+{org_id}@system.flux.internal");
-
-    let mut tx = match pool.begin().await {
-        Ok(tx) => tx,
-        Err(_) => return Err(util::api_error(ApiErrorCode::InternalError)),
-    };
-
-    let user_inserted = sqlx::query(
-        "insert into users (id, email, display_name, password_hash, is_system_bot) \
-         values ($1, $2, $3, null, true)",
-    )
-    .bind(bot_user_id)
-    .bind(&bot_email)
-    .bind(display_name)
-    .execute(&mut *tx)
-    .await;
-    if user_inserted.is_err() {
-        return Err(util::api_error(ApiErrorCode::InternalError));
-    }
-
-    let member_inserted = sqlx::query(
-        "insert into organization_members (organization_id, user_id, role, joined_at) \
-         values ($1, $2, 'member', $3)",
-    )
-    .bind(org_id)
-    .bind(bot_user_id)
-    .bind(now)
-    .execute(&mut *tx)
-    .await;
-    if member_inserted.is_err() {
-        return Err(util::api_error(ApiErrorCode::InternalError));
-    }
-
-    let channel_inserted = sqlx::query(
-        "insert into channels (id, organization_id, name, kind, experience_mode_hint, created_at) \
-         values ($1, $2, 'lorelei', 'lorelei', 'work', $3)",
-    )
-    .bind(channel_id)
-    .bind(org_id)
-    .bind(now)
-    .execute(&mut *tx)
-    .await;
-    if channel_inserted.is_err() {
-        return Err(util::api_error(ApiErrorCode::InternalError));
-    }
-
-    if tx.commit().await.is_err() {
-        return Err(util::api_error(ApiErrorCode::InternalError));
-    }
-
-    Ok((bot_user_id, tenant_id, agent_id, channel_id))
 }
 
 // ---------------------------------------------------------------------------
@@ -409,33 +157,23 @@ async fn add_channel(
         Err(e) => return e,
     }
 
-    let channel_org: Option<Uuid> = match sqlx::query_scalar(
-        "select organization_id from channels where id = $1",
-    )
-    .bind(req.channel_id)
-    .fetch_optional(&state.pool)
-    .await
-    {
-        Ok(v) => v,
-        Err(_) => return util::api_error(ApiErrorCode::InternalError),
-    };
+    let channel_org: Option<Uuid> =
+        match sqlx::query_scalar("select organization_id from channels where id = $1")
+            .bind(req.channel_id)
+            .fetch_optional(&state.pool)
+            .await
+        {
+            Ok(v) => v,
+            Err(_) => return util::api_error(ApiErrorCode::InternalError),
+        };
     if channel_org != Some(org_id) {
         return util::api_error(ApiErrorCode::NotFound);
     }
 
-    let default_channel_id: Option<Uuid> = match sqlx::query_scalar(
-        "select default_channel_id from org_lorelei_settings where organization_id = $1",
-    )
-    .bind(org_id)
-    .fetch_optional(&state.pool)
-    .await
-    {
-        Ok(v) => v.flatten(),
-        Err(_) => return util::api_error(ApiErrorCode::InternalError),
-    };
-    if default_channel_id == Some(req.channel_id) {
-        // Already always available — adding it to the extension table is meaningless.
-        return util::api_error(ApiErrorCode::ValidationError);
+    // Lazily provisions the org's Lorelei tenant/agent on the very first channel added.
+    if let Err(e) = lorelei_bridge::provision_org_lorelei(&state.pool, org_id).await {
+        tracing::error!(error = %e, "failed to provision org lorelei tenant/agent");
+        return util::api_error(ApiErrorCode::InternalError);
     }
 
     let inserted = sqlx::query(
@@ -663,9 +401,9 @@ async fn get_preferences(State(state): State<AppState>, auth: AuthContext) -> im
 }
 
 /// Note: full-replace semantics, not a sparse patch — both fields are always written.
-/// `null`/omitted both mean "inherit the org default". A real sparse PATCH (distinguishing
-/// "don't touch" from "clear") needs a double-`Option` deserializer; not worth it until the
-/// frontend (Phase L4) actually needs that distinction.
+/// `null`/omitted both mean "inherit the platform default". A real sparse PATCH
+/// (distinguishing "don't touch" from "clear") needs a double-`Option` deserializer; not
+/// worth it until the frontend actually needs that distinction.
 #[derive(Debug, Deserialize)]
 struct UpdatePreferencesRequest {
     #[serde(default)]
@@ -719,10 +457,16 @@ async fn update_preferences(
 // Message-route hook (called from `routes_messages::send_message`)
 // ---------------------------------------------------------------------------
 
-/// Checks whether `channel_id` is Lorelei-enabled for `org_id` and, if so, kicks off a
-/// background run. Cheap to call on every message send — the eligibility check is 1-2
-/// indexed point lookups; the actual LLM call happens in a spawned task so it never delays
-/// the sender's own response.
+/// Two trigger paths:
+/// - **PM**: `channel_id` is a DM channel that includes the global Lorelei user as a member.
+///   Any member can do this (same as messaging any other user) — runs use the *sender's own*
+///   resolved provider/credential, in the sender's personal per-(user, org) memory scope.
+/// - **Org channel**: `channel_id` is in `org_lorelei_channels`. Requires
+///   `LORELEI_INVOKE_CHANNEL`. Runs use the *org owner's* resolved provider/credential, in the
+///   org's shared memory scope.
+///
+/// Cheap to call on every message send — the eligibility check is 1-2 indexed point lookups;
+/// the actual LLM call happens in a spawned task so it never delays the sender's own response.
 pub(crate) async fn maybe_trigger_reply(
     state: &AppState,
     org_id: Uuid,
@@ -733,93 +477,145 @@ pub(crate) async fn maybe_trigger_reply(
     let Some(lorelei) = state.lorelei.clone() else {
         return;
     };
-
-    let org = match lorelei_bridge::load_org_lorelei(&state.pool, org_id).await {
-        Ok(o) => o,
-        Err(_) => return,
-    };
-
-    if sender_user_id == org.bot_user_id {
-        return; // defensive: never let the bot reply to itself
+    if sender_user_id == LORELEI_USER_ID {
+        return; // defensive: never let her reply to herself
     }
 
-    let is_default_channel = channel_id == org.default_channel_id;
-    if !is_default_channel {
-        let is_extended: Option<i32> = sqlx::query_scalar(
-            "select 1 from org_lorelei_channels where organization_id = $1 and channel_id = $2",
-        )
-        .bind(org_id)
+    let kind: Option<String> = sqlx::query_scalar("select kind from channels where id = $1")
         .bind(channel_id)
         .fetch_optional(&state.pool)
         .await
         .ok()
         .flatten();
-        if is_extended.is_none() {
-            return; // not a Lorelei-enabled channel
-        }
-        match util::can(
-            &state.pool,
-            sender_user_id,
-            org_id,
-            Permission::LoreleiInvokeChannel,
-        )
-        .await
-        {
-            Ok(true) => {}
-            _ => return,
-        }
-    }
+    let Some(kind) = kind else {
+        return;
+    };
 
     let pool = state.pool.clone();
     let nats = state.nats.clone();
     let input = body.to_string();
 
-    tokio::spawn(async move {
-        let provider =
-            match lorelei_bridge::resolve_provider(&pool, &lorelei.credentials_key, &org, sender_user_id)
-                .await
-            {
-                Ok(p) => p,
-                Err(_) => {
-                    post_bot_message(
-                        &pool,
-                        &nats,
-                        org_id,
-                        channel_id,
-                        org.bot_user_id,
-                        "Lorelei couldn't respond — no API key is configured for the selected model.",
-                    )
-                    .await;
+    if kind == "dm" {
+        let is_lorelei_dm: Option<i32> = sqlx::query_scalar(
+            "select 1 from dm_channel_members where channel_id = $1 and user_id = $2",
+        )
+        .bind(channel_id)
+        .bind(LORELEI_USER_ID)
+        .fetch_optional(&state.pool)
+        .await
+        .ok()
+        .flatten();
+        if is_lorelei_dm.is_none() {
+            return;
+        }
+
+        tokio::spawn(async move {
+            let thread = match lorelei_bridge::load_or_create_user_thread(&pool, sender_user_id, org_id).await {
+                Ok(t) => t,
+                Err(e) => {
+                    tracing::error!(error = %e, "failed to load lorelei user thread");
                     return;
                 }
             };
+            run_and_reply(&pool, &nats, &lorelei, org_id, channel_id, thread.tenant_id, thread.agent_id, sender_user_id, input).await;
+        });
+        return;
+    }
 
-        let outcome = lorelei
-            .harbor
-            .run_and_wait(
-                org.tenant_id,
-                org.agent_id,
-                input,
-                provider,
-                lorelei_bridge::MaxRisk::Low,
-                std::time::Duration::from_secs(60),
-            )
-            .await;
+    let is_extended: Option<i32> = sqlx::query_scalar(
+        "select 1 from org_lorelei_channels where organization_id = $1 and channel_id = $2",
+    )
+    .bind(org_id)
+    .bind(channel_id)
+    .fetch_optional(&state.pool)
+    .await
+    .ok()
+    .flatten();
+    if is_extended.is_none() {
+        return;
+    }
+    match util::can(&state.pool, sender_user_id, org_id, Permission::LoreleiInvokeChannel).await {
+        Ok(true) => {}
+        _ => return,
+    }
 
-        let text = match outcome {
-            Ok(lorelei_bridge::RunOutcome::Succeeded(text)) => text,
-            Ok(lorelei_bridge::RunOutcome::Denied(text)) => text,
-            Ok(lorelei_bridge::RunOutcome::TimedOut) => {
-                "Lorelei is taking longer than expected — try again in a moment.".to_string()
-            }
+    let owner_id: Option<Uuid> = sqlx::query_scalar(
+        "select user_id from organization_members where organization_id = $1 and role = 'owner' limit 1",
+    )
+    .bind(org_id)
+    .fetch_optional(&state.pool)
+    .await
+    .ok()
+    .flatten();
+    let Some(owner_id) = owner_id else {
+        return;
+    };
+
+    tokio::spawn(async move {
+        let org = match lorelei_bridge::load_org_lorelei(&pool, org_id).await {
+            Ok(o) => o,
             Err(e) => {
-                tracing::error!(error = %e, "lorelei run failed");
-                "Lorelei couldn't respond — try again.".to_string()
+                tracing::error!(error = %e, "org channel lorelei tenant/agent missing");
+                return;
             }
         };
-
-        post_bot_message(&pool, &nats, org_id, channel_id, org.bot_user_id, &text).await;
+        run_and_reply(&pool, &nats, &lorelei, org_id, channel_id, org.tenant_id, org.agent_id, owner_id, input).await;
     });
+}
+
+#[allow(clippy::too_many_arguments)]
+async fn run_and_reply(
+    pool: &PgPool,
+    nats: &async_nats::Client,
+    lorelei: &crate::LoreleiRuntime,
+    org_id: Uuid,
+    channel_id: Uuid,
+    tenant_id: Uuid,
+    agent_id: Uuid,
+    credential_user_id: Uuid,
+    input: String,
+) {
+    let provider = match lorelei_bridge::resolve_provider(pool, &lorelei.credentials_key, credential_user_id).await {
+        Ok(p) => p,
+        Err(e) => {
+            tracing::error!(error = %e, "failed to resolve lorelei provider");
+            post_bot_message(
+                pool,
+                nats,
+                org_id,
+                channel_id,
+                "Lorelei couldn't respond — no API key is configured for the selected model.",
+            )
+            .await;
+            return;
+        }
+    };
+
+    let outcome = lorelei
+        .harbor
+        .run_and_wait(
+            tenant_id,
+            agent_id,
+            input,
+            provider,
+            lorelei_bridge::MaxRisk::Low,
+            std::time::Duration::from_secs(60),
+        )
+        .await;
+
+    let text = match outcome {
+        Ok(lorelei_bridge::RunOutcome::Succeeded(text)) => text,
+        Ok(lorelei_bridge::RunOutcome::Denied(text)) => text,
+        Ok(lorelei_bridge::RunOutcome::TimedOut) => {
+            "Lorelei is taking longer than expected — try again in a moment.".to_string()
+        }
+        Err(e) => {
+            tracing::error!(error = %e, "lorelei run failed");
+            "Lorelei couldn't respond — try again.".to_string()
+        }
+    };
+
+    post_bot_message(pool, nats, org_id, channel_id, &text).await;
 }
 
 async fn post_bot_message(
@@ -827,7 +623,6 @@ async fn post_bot_message(
     nats: &async_nats::Client,
     org_id: Uuid,
     channel_id: Uuid,
-    bot_user_id: Uuid,
     body: &str,
 ) {
     let message_id = Uuid::now_v7();
@@ -840,7 +635,7 @@ async fn post_bot_message(
     .bind(message_id)
     .bind(org_id)
     .bind(channel_id)
-    .bind(bot_user_id)
+    .bind(LORELEI_USER_ID)
     .bind(body)
     .bind(now)
     .execute(pool)
@@ -859,7 +654,7 @@ async fn post_bot_message(
     let env = EventEnvelope::new(
         "message.created",
         org_id,
-        Some(bot_user_id),
+        Some(LORELEI_USER_ID),
         MessageCreatedData {
             channel_id,
             message_id,

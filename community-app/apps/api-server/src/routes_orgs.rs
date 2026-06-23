@@ -351,6 +351,21 @@ async fn create_org(
         return util::api_error(ApiErrorCode::InternalError);
     }
 
+    // Lorelei joins every org automatically — a plain member row, nothing special. Lets any
+    // member PM her (reusing the normal DM mechanism) without a separate per-org "enable" step.
+    let lorelei_member_insert = sqlx::query(
+        "insert into organization_members (organization_id, user_id, role, joined_at) \
+         values ($1, $2, 'member', $3)",
+    )
+    .bind(org_id)
+    .bind(lorelei_bridge::LORELEI_USER_ID)
+    .bind(now)
+    .execute(&mut *tx)
+    .await;
+    if lorelei_member_insert.is_err() {
+        return util::api_error(ApiErrorCode::InternalError);
+    }
+
     // Default channels:
     //   Work mode:  General, Announcements, Reports
     //   Play mode:  General, Announcements, Voice
