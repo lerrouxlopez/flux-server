@@ -194,6 +194,12 @@ struct UserThreadRow {
 /// `org_id`: a DM channel (reusing the same `channels`/`dm_channel_members` tables every
 /// other DM uses — no new messaging infrastructure) plus a dedicated tenant/agent pair.
 ///
+/// Lorelei is reachable through the normal friend/DM flow (`routes_dms.rs::create_or_get_dm`)
+/// like any other member, so a DM channel between `user_id` and her may already exist by the
+/// time this is first called — checked before creating a new one, so the two entry points
+/// (starting a DM the normal way vs. this being called from the message-trigger hook) always
+/// converge on the same channel instead of creating a duplicate.
+///
 /// Not fully race-safe: two concurrent first-PMs from the same user could each create a DM
 /// channel before the `on conflict` resolves, leaving one orphaned (unused, harmless) extra
 /// channel behind. Acceptable for v1 — the loser's channel is simply never linked from
@@ -219,23 +225,46 @@ pub async fn load_or_create_user_thread(
         });
     }
 
-    let channel_id = Uuid::now_v7();
-    let mut tx = pool.begin().await?;
-
-    sqlx::query("insert into channels (id, organization_id, name, kind, created_at) values ($1, $2, '', 'dm', now())")
-        .bind(channel_id)
-        .bind(org_id)
-        .execute(&mut *tx)
-        .await?;
-
-    sqlx::query(
-        "insert into dm_channel_members (channel_id, user_id, added_at) values ($1, $2, now()), ($1, $3, now())",
+    let existing_channel_id: Option<Uuid> = sqlx::query_scalar(
+        r#"
+        select c.id
+        from channels c
+        join dm_channel_members a on a.channel_id = c.id and a.user_id = $2
+        join dm_channel_members b on b.channel_id = c.id and b.user_id = $3
+        where c.organization_id = $1 and c.kind = 'dm'
+        limit 1
+        "#,
     )
-    .bind(channel_id)
+    .bind(org_id)
     .bind(user_id)
     .bind(LORELEI_USER_ID)
-    .execute(&mut *tx)
+    .fetch_optional(pool)
     .await?;
+
+    let mut tx = pool.begin().await?;
+
+    let channel_id = match existing_channel_id {
+        Some(id) => id,
+        None => {
+            let channel_id = Uuid::now_v7();
+            sqlx::query("insert into channels (id, organization_id, name, kind, created_at) values ($1, $2, '', 'dm', now())")
+                .bind(channel_id)
+                .bind(org_id)
+                .execute(&mut *tx)
+                .await?;
+
+            sqlx::query(
+                "insert into dm_channel_members (channel_id, user_id, added_at) values ($1, $2, now()), ($1, $3, now())",
+            )
+            .bind(channel_id)
+            .bind(user_id)
+            .bind(LORELEI_USER_ID)
+            .execute(&mut *tx)
+            .await?;
+
+            channel_id
+        }
+    };
 
     sqlx::query(
         r#"

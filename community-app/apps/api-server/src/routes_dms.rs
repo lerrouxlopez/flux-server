@@ -24,6 +24,7 @@ struct UserSummary {
     id: Uuid,
     email: String,
     display_name: String,
+    avatar_url: Option<String>,
 }
 
 #[derive(Debug, Serialize)]
@@ -57,7 +58,8 @@ async fn list_dms(
           c.id as channel_id,
           u.id as peer_id,
           u.email as peer_email,
-          u.display_name as peer_display_name
+          u.display_name as peer_display_name,
+          u.avatar_url as peer_avatar_url
         from channels c
         join dm_channel_members m_me on m_me.channel_id = c.id and m_me.user_id = $2
         join dm_channel_members m_peer on m_peer.channel_id = c.id and m_peer.user_id <> $2
@@ -85,6 +87,7 @@ async fn list_dms(
                 id: r.get("peer_id"),
                 email: r.get("peer_email"),
                 display_name: r.get("peer_display_name"),
+                avatar_url: r.get("peer_avatar_url"),
             },
         });
     }
@@ -114,32 +117,8 @@ async fn create_or_get_dm(
         return util::api_error(ApiErrorCode::PermissionDenied);
     }
 
-    let friends = sqlx::query_scalar::<_, i64>(
-        r#"
-        select 1::bigint
-        from friend_requests
-        where organization_id = $1
-          and status = 'accepted'
-          and (
-            (requester_id = $2 and addressee_id = $3)
-            or
-            (requester_id = $3 and addressee_id = $2)
-          )
-        "#,
-    )
-    .bind(org_id)
-    .bind(auth.user_id)
-    .bind(user_id)
-    .fetch_optional(&state.pool)
-    .await;
-
-    let friends = match friends {
-        Ok(v) => v.is_some(),
-        Err(_) => return util::api_error(ApiErrorCode::InternalError),
-    };
-    if !friends {
-        return util::api_error(ApiErrorCode::PermissionDenied);
-    }
+    // Any two members of the same org can DM each other directly -- friending is a separate,
+    // optional social feature (a "buddy list"), not a messaging permission gate.
 
     // Existing DM?
     let existing = sqlx::query_scalar::<_, Uuid>(
