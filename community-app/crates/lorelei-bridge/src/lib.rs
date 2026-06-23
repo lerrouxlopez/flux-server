@@ -10,4 +10,7 @@ pub mod resolve;
 
 pub use client::{HarborClient, MaxRisk, RunOutcome};
 pub use error::BridgeError;
-pub use resolve::{load_org_lorelei, resolve_provider, OrgLorelei, ProviderResolution};
+pub use resolve::{
+    load_org_lorelei, load_or_create_user_thread, provision_org_lorelei, resolve_provider,
+    OrgLorelei, ProviderResolution, UserThread, LORELEI_USER_ID,
+};

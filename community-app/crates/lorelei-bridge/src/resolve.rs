@@ -1,14 +1,30 @@
-//! Resolves which org a Lorelei conversation belongs to, and which LLM provider/model/
-//! credential a given member's message should run with.
+//! Lorelei is a single global platform user (see `LORELEI_USER_ID`) rather than one bot per
+//! org. There are two separate memory/credential scopes:
 //!
-//! Resolution chain (mirrors the existing notification-settings pattern in this codebase):
-//! user override (requires a stored credential) -> org default -> platform default (Ollama).
+//! - **Personal PM** (`UserThread`): one Lorelei tenant/agent + DM channel per (user, org)
+//!   pair, created lazily on a user's first PM to her in that org. Runs use *that user's
+//!   own* resolved provider/credential.
+//! - **Org channel** (`OrgLorelei`): one Lorelei tenant/agent per org, provisioned lazily the
+//!   first time an admin/owner adds her to a channel. Runs use the *org owner's* resolved
+//!   provider/credential — there is no separate "org default" setting anymore; the owner's
+//!   own profile preference/credential effectively *is* the org's default.
+//!
+//! Both scopes share the same `resolve_provider`, parameterized only by which user's
+//! credential to resolve — the caller decides whether that's the sender (PM) or the owner
+//! (org channel).
 
 use secrets::CredentialsKey;
 use sqlx::PgPool;
 use uuid::Uuid;
 
 use crate::error::BridgeError;
+
+/// Fixed, well-known user ID for the single global Lorelei system user — seeded once via
+/// `crates/db/migrations/202606230004_lorelei_global_user.sql`. Mirrored in the flux frontend
+/// repo as a TS constant (`LORELEI_USER_ID` in `packages/api`).
+pub const LORELEI_USER_ID: Uuid = Uuid::from_bytes([
+    0x63, 0xdc, 0xae, 0x57, 0xb2, 0xf5, 0x47, 0x25, 0xa1, 0x61, 0xc1, 0x35, 0x99, 0x11, 0x3a, 0x80,
+]);
 
 /// What to send Lorelei for a given run's provider.
 #[derive(Debug, Clone)]
@@ -26,18 +42,6 @@ pub enum ProviderResolution {
 }
 
 #[derive(sqlx::FromRow)]
-struct OrgLoreleiRow {
-    enabled: bool,
-    display_name: String,
-    default_provider: String,
-    default_model: String,
-    bot_user_id: Option<Uuid>,
-    lorelei_tenant_id: Option<Uuid>,
-    lorelei_agent_id: Option<Uuid>,
-    default_channel_id: Option<Uuid>,
-}
-
-#[derive(sqlx::FromRow)]
 struct UserPreferenceRow {
     preferred_provider: Option<String>,
     preferred_model: Option<String>,
@@ -48,63 +52,6 @@ struct CredentialRow {
     encrypted_api_key: Vec<u8>,
 }
 
-/// An org's resolved, fully-provisioned Lorelei settings. Construction fails (with
-/// `BridgeError::NotEnabled`) if the org hasn't enabled Lorelei or its bot user / tenant /
-/// agent / default channel haven't been provisioned yet (see `LORELEI_BUILDPLAN.md` Section 7
-/// — provisioning happens in the admin-settings enable endpoint, not here).
-pub struct OrgLorelei {
-    pub display_name: String,
-    pub default_provider: String,
-    pub default_model: String,
-    pub bot_user_id: Uuid,
-    pub tenant_id: Uuid,
-    pub agent_id: Uuid,
-    pub default_channel_id: Uuid,
-}
-
-pub async fn load_org_lorelei(pool: &PgPool, org_id: Uuid) -> Result<OrgLorelei, BridgeError> {
-    let row = sqlx::query_as::<_, OrgLoreleiRow>(
-        r#"
-        select enabled, display_name, default_provider, default_model,
-               bot_user_id, lorelei_tenant_id, lorelei_agent_id, default_channel_id
-        from org_lorelei_settings
-        where organization_id = $1
-        "#,
-    )
-    .bind(org_id)
-    .fetch_optional(pool)
-    .await?;
-
-    let Some(row) = row else {
-        return Err(BridgeError::NotEnabled);
-    };
-
-    let (Some(bot_user_id), Some(tenant_id), Some(agent_id), Some(default_channel_id)) = (
-        row.bot_user_id,
-        row.lorelei_tenant_id,
-        row.lorelei_agent_id,
-        row.default_channel_id,
-    ) else {
-        return Err(BridgeError::NotEnabled);
-    };
-
-    if !row.enabled {
-        return Err(BridgeError::NotEnabled);
-    }
-
-    Ok(OrgLorelei {
-        display_name: row.display_name,
-        default_provider: row.default_provider,
-        default_model: row.default_model,
-        bot_user_id,
-        tenant_id,
-        agent_id,
-        default_channel_id,
-    })
-}
-
-/// Maps a FLUX-stored provider name to Lorelei's wire `ProviderKind`. `None` means "use the
-/// platform default" — covers `"ollama"` and any value that isn't a BYO-key provider.
 fn to_wire_kind(provider: &str) -> Option<&'static str> {
     match provider {
         "openai" => Some("openai-compatible"),
@@ -121,11 +68,11 @@ fn default_model_for(provider: &str) -> &'static str {
     }
 }
 
-/// Resolves the effective provider for `user_id` acting within `org`.
+/// Resolves the effective provider for `user_id`. Used identically for a PM sender or an
+/// org-channel's owner — the resolution chain doesn't care which role the user plays.
 pub async fn resolve_provider(
     pool: &PgPool,
     key: &CredentialsKey,
-    org: &OrgLorelei,
     user_id: Uuid,
 ) -> Result<ProviderResolution, BridgeError> {
     let pref = sqlx::query_as::<_, UserPreferenceRow>(
@@ -140,9 +87,10 @@ pub async fn resolve_provider(
         None => (None, None),
     };
 
-    let effective_provider = preferred_provider.unwrap_or_else(|| org.default_provider.clone());
-
-    let Some(wire_kind) = to_wire_kind(&effective_provider) else {
+    let Some(provider) = preferred_provider else {
+        return Ok(ProviderResolution::PlatformDefault);
+    };
+    let Some(wire_kind) = to_wire_kind(&provider) else {
         return Ok(ProviderResolution::PlatformDefault);
     };
 
@@ -150,24 +98,176 @@ pub async fn resolve_provider(
         "select encrypted_api_key from user_llm_credentials where user_id = $1 and provider = $2",
     )
     .bind(user_id)
-    .bind(&effective_provider)
+    .bind(&provider)
     .fetch_optional(pool)
     .await?;
 
     match cred {
         Some(row) => {
             let api_key = secrets::decrypt(&row.encrypted_api_key, key)?;
-            let model = preferred_model.unwrap_or_else(|| default_model_for(&effective_provider).to_string());
+            let model = preferred_model.unwrap_or_else(|| default_model_for(&provider).to_string());
             Ok(ProviderResolution::Override {
                 kind: wire_kind.to_string(),
                 model,
                 api_key,
             })
         }
-        // No credential for the resolved provider — fall back to the org default, unless
-        // the org default *is* that same paid provider (then there's nothing left to fall
-        // back to, and the caller should surface a clear "no API key configured" error).
-        None if to_wire_kind(&org.default_provider).is_none() => Ok(ProviderResolution::PlatformDefault),
-        None => Err(BridgeError::NoCredentialAvailable),
+        // Wanted a paid provider but never saved a key for it — fall back rather than fail;
+        // the caller still gets a real reply, just from the free default.
+        None => Ok(ProviderResolution::PlatformDefault),
     }
+}
+
+// ---------------------------------------------------------------------------
+// Org-channel scope
+// ---------------------------------------------------------------------------
+
+pub struct OrgLorelei {
+    pub tenant_id: Uuid,
+    pub agent_id: Uuid,
+}
+
+#[derive(sqlx::FromRow)]
+struct OrgLoreleiRow {
+    lorelei_tenant_id: Uuid,
+    lorelei_agent_id: Uuid,
+}
+
+/// Reads an org's Lorelei tenant/agent. Errors `NotEnabled` if she's never been added to a
+/// channel in this org — provisioning happens in `provision_org_lorelei`, called from
+/// `routes_lorelei.rs::add_channel`, not here.
+pub async fn load_org_lorelei(pool: &PgPool, org_id: Uuid) -> Result<OrgLorelei, BridgeError> {
+    let row = sqlx::query_as::<_, OrgLoreleiRow>(
+        "select lorelei_tenant_id, lorelei_agent_id from org_lorelei_settings where organization_id = $1",
+    )
+    .bind(org_id)
+    .fetch_optional(pool)
+    .await?;
+
+    let Some(row) = row else {
+        return Err(BridgeError::NotEnabled);
+    };
+    Ok(OrgLorelei {
+        tenant_id: row.lorelei_tenant_id,
+        agent_id: row.lorelei_agent_id,
+    })
+}
+
+/// Idempotently provisions an org's Lorelei tenant/agent if they don't exist yet. Tenant/
+/// agent IDs are opaque UUIDs Lorelei never needs pre-registered (confirmed in
+/// LORELEI_BUILDPLAN.md Section 2.3), so minting them here is safe.
+pub async fn provision_org_lorelei(pool: &PgPool, org_id: Uuid) -> Result<OrgLorelei, BridgeError> {
+    sqlx::query(
+        r#"
+        insert into org_lorelei_settings (organization_id, lorelei_tenant_id, lorelei_agent_id, created_at, updated_at)
+        values ($1, $2, $3, now(), now())
+        on conflict (organization_id) do nothing
+        "#,
+    )
+    .bind(org_id)
+    .bind(Uuid::new_v4())
+    .bind(Uuid::new_v4())
+    .execute(pool)
+    .await?;
+
+    load_org_lorelei(pool, org_id).await
+}
+
+// ---------------------------------------------------------------------------
+// Personal PM scope
+// ---------------------------------------------------------------------------
+
+pub struct UserThread {
+    pub tenant_id: Uuid,
+    pub agent_id: Uuid,
+    pub dm_channel_id: Uuid,
+}
+
+#[derive(sqlx::FromRow)]
+struct UserThreadRow {
+    lorelei_tenant_id: Uuid,
+    lorelei_agent_id: Uuid,
+    dm_channel_id: Uuid,
+}
+
+/// Idempotently returns (creating on first call) a user's personal Lorelei thread within
+/// `org_id`: a DM channel (reusing the same `channels`/`dm_channel_members` tables every
+/// other DM uses — no new messaging infrastructure) plus a dedicated tenant/agent pair.
+///
+/// Not fully race-safe: two concurrent first-PMs from the same user could each create a DM
+/// channel before the `on conflict` resolves, leaving one orphaned (unused, harmless) extra
+/// channel behind. Acceptable for v1 — the loser's channel is simply never linked from
+/// `user_lorelei_threads` and nothing references it again.
+pub async fn load_or_create_user_thread(
+    pool: &PgPool,
+    user_id: Uuid,
+    org_id: Uuid,
+) -> Result<UserThread, BridgeError> {
+    if let Some(row) = sqlx::query_as::<_, UserThreadRow>(
+        "select lorelei_tenant_id, lorelei_agent_id, dm_channel_id from user_lorelei_threads \
+         where user_id = $1 and organization_id = $2",
+    )
+    .bind(user_id)
+    .bind(org_id)
+    .fetch_optional(pool)
+    .await?
+    {
+        return Ok(UserThread {
+            tenant_id: row.lorelei_tenant_id,
+            agent_id: row.lorelei_agent_id,
+            dm_channel_id: row.dm_channel_id,
+        });
+    }
+
+    let channel_id = Uuid::now_v7();
+    let mut tx = pool.begin().await?;
+
+    sqlx::query("insert into channels (id, organization_id, name, kind, created_at) values ($1, $2, '', 'dm', now())")
+        .bind(channel_id)
+        .bind(org_id)
+        .execute(&mut *tx)
+        .await?;
+
+    sqlx::query(
+        "insert into dm_channel_members (channel_id, user_id, added_at) values ($1, $2, now()), ($1, $3, now())",
+    )
+    .bind(channel_id)
+    .bind(user_id)
+    .bind(LORELEI_USER_ID)
+    .execute(&mut *tx)
+    .await?;
+
+    sqlx::query(
+        r#"
+        insert into user_lorelei_threads (user_id, organization_id, lorelei_tenant_id, lorelei_agent_id, dm_channel_id, created_at)
+        values ($1, $2, $3, $4, $5, now())
+        on conflict (user_id, organization_id) do nothing
+        "#,
+    )
+    .bind(user_id)
+    .bind(org_id)
+    .bind(Uuid::new_v4())
+    .bind(Uuid::new_v4())
+    .bind(channel_id)
+    .execute(&mut *tx)
+    .await?;
+
+    tx.commit().await?;
+
+    // Re-select rather than trust our own insert — if we lost a race, this returns the
+    // winning row (whose dm_channel_id may differ from the one we just created above).
+    let row = sqlx::query_as::<_, UserThreadRow>(
+        "select lorelei_tenant_id, lorelei_agent_id, dm_channel_id from user_lorelei_threads \
+         where user_id = $1 and organization_id = $2",
+    )
+    .bind(user_id)
+    .bind(org_id)
+    .fetch_one(pool)
+    .await?;
+
+    Ok(UserThread {
+        tenant_id: row.lorelei_tenant_id,
+        agent_id: row.lorelei_agent_id,
+        dm_channel_id: row.dm_channel_id,
+    })
 }
