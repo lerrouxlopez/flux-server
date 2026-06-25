@@ -149,6 +149,7 @@ impl SongProvider for AnthropicProvider {
                 role: "user".to_string(),
                 content: request.input.clone(),
             }],
+            temperature: request.temperature,
         };
 
         let (resp, retries, latency) = self.request_with_retry(url, &body).await?;
@@ -229,6 +230,8 @@ struct MessagesRequest {
     model: String,
     max_tokens: u32,
     messages: Vec<AnthropicMessage>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    temperature: Option<f32>,
 }
 
 #[derive(Debug, Serialize)]

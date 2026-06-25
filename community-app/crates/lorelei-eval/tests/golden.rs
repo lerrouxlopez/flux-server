@@ -416,6 +416,7 @@ async fn provider_fallback_works() {
                 input: "hi".to_string(),
                 context: vec![],
                 reasoning_summary: None,
+                temperature: None,
             },
         )
         .await
@@ -438,6 +439,7 @@ async fn unsupported_provider_fails_clearly() {
             input: "hi".to_string(),
             context: vec![],
             reasoning_summary: None,
+            temperature: None,
         })
         .await
         .unwrap_err();
@@ -470,6 +472,7 @@ async fn no_full_prompts_or_secrets_in_errors_by_default() {
             input: prompt.clone(),
             context: vec![],
             reasoning_summary: None,
+            temperature: None,
         })
         .await
         .unwrap_err();

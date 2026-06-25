@@ -68,6 +68,7 @@ fn request() -> SongRequest {
         input: "please do it".to_string(),
         context: Vec::new(),
         reasoning_summary: None,
+        temperature: None,
     }
 }
 

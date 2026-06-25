@@ -233,7 +233,9 @@ pub struct EchoCitation {
     pub chunk_index: i32,
 }
 
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+// Not `Eq` -- `temperature: Option<f32>` can't derive it (floats aren't reflexive over NaN).
+// Nothing needs SongRequest as a set/map key; PartialEq (for assert_eq! in tests) is enough.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct SongRequest {
     pub tenant_id: TenantId,
     pub agent_id: AgentId,
@@ -241,6 +243,11 @@ pub struct SongRequest {
     pub input: String,
     pub context: Vec<String>,
     pub reasoning_summary: Option<String>,
+    /// `None` leaves the provider's own default. Set to `Some(0.0)` for structured-output
+    /// steps (the planner's JSON decision) where deterministic schema adherence matters more
+    /// than variety -- smaller local models in particular are much more likely to put a tool
+    /// name directly in `action` instead of `action="call_shell"` at default temperature.
+    pub temperature: Option<f32>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
