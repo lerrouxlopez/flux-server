@@ -562,8 +562,11 @@ impl SingleAgentTideRuntime {
                         status = RunStatus::Succeeded;
                     }
                     SirenDecision::Deny { reasoning_summary } => {
-                        final_output =
-                            format!("run_id={}\nDenied by Siren: {}", run_id.0, reasoning_summary);
+                        // `run_id` is already a structured field on the API response
+                        // (`RunResponse.run_id`) -- it doesn't need to be baked into the text
+                        // too, since that text is posted verbatim as the user-facing chat
+                        // reply when this run came from a DM/channel message.
+                        final_output = format!("Denied by Siren: {reasoning_summary}");
                         status = RunStatus::Failed;
                     }
                     SirenDecision::RequireApproval {
@@ -590,8 +593,7 @@ impl SingleAgentTideRuntime {
                         .await?;
 
                         final_output = format!(
-                            "run_id={}\nApproval required: {}\n\n{}",
-                            run_id.0, reasoning_summary, approval_prompt
+                            "Approval required: {reasoning_summary}\n\n{approval_prompt}"
                         );
                         status = RunStatus::Canceled;
                     }
@@ -803,7 +805,7 @@ impl SingleAgentTideRuntime {
             reasoning_summary: Some("answer".to_string()),
         };
         let resp = song.complete(req).await?;
-        Ok(format!("run_id={}\n{}", run_id.0, resp.output))
+        Ok(resp.output)
     }
 
     #[allow(clippy::too_many_arguments)]
@@ -838,7 +840,7 @@ impl SingleAgentTideRuntime {
             reasoning_summary: Some("answer".to_string()),
         };
         let resp = song.complete(req).await?;
-        Ok(format!("run_id={}\n{}", run_id.0, resp.output))
+        Ok(resp.output)
     }
 
     #[allow(clippy::too_many_arguments)]
