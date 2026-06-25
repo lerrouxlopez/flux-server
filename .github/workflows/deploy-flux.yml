@@ -181,10 +181,15 @@ jobs:
                   LORELEI_MOCK_API_KEY: unused-mock-key
                 # Lets "host.docker.internal" (the base_url api-server forwards in each
                 # provider_override) resolve to this host's lorelei-brains (Ollama) systemd
-                # service, which listens on the docker bridge gateway but isn't published
-                # publicly. Requires Docker 20.10+ (this server runs current Ubuntu/Docker).
+                # service. NOTE: deliberately NOT using the "host-gateway" magic value here
+                # -- verified on this host that it resolves to docker0's gateway (172.17.0.1),
+                # not this compose project's "flux_default" network gateway, because this
+                # host runs multiple bridge networks. Pinned to the literal gateway IP that
+                # lorelei-brains' systemd unit (OLLAMA_HOST) actually binds to instead. If the
+                # "flux_default" network is ever recreated with a different subnet, this
+                # (and lorelei-brains.service's OLLAMA_HOST on the VPS) both need updating.
                 extra_hosts:
-                  - "host.docker.internal:host-gateway"
+                  - "host.docker.internal:172.20.0.1"
                 ports:
                   - "127.0.0.1:8013:8080"
                 healthcheck:
