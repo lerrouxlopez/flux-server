@@ -419,7 +419,10 @@ async fn direct_answer_path() {
         .await
         .unwrap();
     assert_eq!(res.status, RunStatus::Succeeded);
-    assert!(res.output.contains("run_id="));
+    // `run_id` is a structured field on the result -- `output` is posted verbatim as the
+    // user-facing chat reply when a run comes from a DM/channel message, so it must not have
+    // internal identifiers baked into it.
+    assert!(!res.output.contains("run_id="));
 
     let reqs = song.requests.lock().unwrap().clone();
     let answer_req = reqs
