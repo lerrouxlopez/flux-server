@@ -23,15 +23,17 @@ struct ProviderOverrideWire {
     kind: String,
     model: String,
     api_key: String,
+    base_url: Option<String>,
 }
 
 impl Serialize for ProviderOverrideWire {
     fn serialize<S: serde::Serializer>(&self, serializer: S) -> Result<S::Ok, S::Error> {
         use serde::ser::SerializeStruct;
-        let mut s = serializer.serialize_struct("ProviderOverrideWire", 3)?;
+        let mut s = serializer.serialize_struct("ProviderOverrideWire", 4)?;
         s.serialize_field("kind", &self.kind)?;
         s.serialize_field("model", &self.model)?;
         s.serialize_field("api_key", &self.api_key)?;
+        s.serialize_field("base_url", &self.base_url)?;
         s.end()
     }
 }
@@ -42,6 +44,7 @@ impl std::fmt::Debug for ProviderOverrideWire {
             .field("kind", &self.kind)
             .field("model", &self.model)
             .field("api_key", &"<redacted>")
+            .field("base_url", &self.base_url)
             .finish()
     }
 }
@@ -151,9 +154,10 @@ impl HarborClient {
     }
 
     /// Submits a run and polls `GET /v1/runs/:id` with exponential backoff (capped at 3s)
-    /// until it reaches a terminal state or `timeout` elapses. There's no platform default
-    /// provider — callers must already have a `ResolvedProvider` (i.e. `resolve_provider`
-    /// returned `Some`) before calling this; it always sends a `provider_override`.
+    /// until it reaches a terminal state or `timeout` elapses. Callers must already have a
+    /// `ResolvedProvider` (i.e. `resolve_provider` returned `Some` — true by default now,
+    /// since an unset preference resolves to the self-hosted Ollama instance) before calling
+    /// this; it always sends a `provider_override`.
     pub async fn run_and_wait(
         &self,
         tenant_id: Uuid,
@@ -167,6 +171,7 @@ impl HarborClient {
             kind: provider.kind,
             model: provider.model,
             api_key: provider.api_key,
+            base_url: provider.base_url,
         });
 
         let run_id = self

@@ -26,7 +26,10 @@ use sqlx::{PgPool, Row};
 use time::OffsetDateTime;
 use uuid::Uuid;
 
-const VALID_PROVIDERS: [&str; 2] = ["openai", "anthropic"];
+// "ollama" needs no saved credential (it's the zero-config platform default — see
+// `lorelei_bridge::resolve_provider`), so it's valid as a *preference* but deliberately
+// absent from `VALID_CREDENTIAL_PROVIDERS` below.
+const VALID_PROVIDERS: [&str; 3] = ["openai", "anthropic", "ollama"];
 const VALID_CREDENTIAL_PROVIDERS: [&str; 2] = ["openai", "anthropic"];
 
 /// Posted in a DM when the *sender themself* has no usable OpenAI/Anthropic credential.
