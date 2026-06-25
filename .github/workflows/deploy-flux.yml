@@ -33,6 +33,7 @@ jobs:
           echo "IMAGE_REALTIME=ghcr.io/${OWNER}/flux-realtime-gateway" >> "$GITHUB_ENV"
           echo "IMAGE_WORKER=ghcr.io/${OWNER}/flux-worker" >> "$GITHUB_ENV"
           echo "IMAGE_WEB=ghcr.io/${OWNER}/flux-web" >> "$GITHUB_ENV"
+          echo "IMAGE_HARBOR=ghcr.io/${OWNER}/flux-lorelei-harbor" >> "$GITHUB_ENV"
 
       - name: Log in to GHCR
         uses: docker/login-action@v3
@@ -68,6 +69,16 @@ jobs:
           file: community-app/Dockerfile.worker
           push: true
           tags: ${{ env.IMAGE_WORKER }}:latest
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+
+      - name: Build and push (lorelei-harbor)
+        uses: docker/build-push-action@v6
+        with:
+          context: community-app
+          file: community-app/Dockerfile.lorelei-harbor
+          push: true
+          tags: ${{ env.IMAGE_HARBOR }}:latest
           cache-from: type=gha
           cache-to: type=gha,mode=max
 
@@ -109,6 +120,92 @@ jobs:
                   POSTGRES_DB: community_app
                 volumes:
                   - /opt/flux/data/postgres:/var/lib/postgresql/data
+                healthcheck:
+                  test: ["CMD-SHELL", "pg_isready -U app -d community_app"]
+                  interval: 5s
+                  timeout: 5s
+                  retries: 12
+
+              qdrant:
+                image: qdrant/qdrant:v1.18.0
+                restart: unless-stopped
+                volumes:
+                  - /opt/flux/data/qdrant:/qdrant/storage
+                healthcheck:
+                  # qdrant image doesn't include curl/wget; use a bash TCP probe instead.
+                  test: ["CMD-SHELL", "bash -lc 'exec 3<>/dev/tcp/127.0.0.1/6333'"]
+                  interval: 5s
+                  timeout: 5s
+                  retries: 12
+
+              lorelei-schema:
+                image: postgres:16
+                depends_on:
+                  postgres:
+                    condition: service_healthy
+                environment:
+                  PGPASSWORD: app
+                entrypoint:
+                  [
+                    "psql",
+                    "-h", "postgres",
+                    "-U", "app",
+                    "-d", "community_app",
+                    "-c", "create schema if not exists lorelei; grant all on schema lorelei to app;",
+                  ]
+
+              lorelei-migrate:
+                image: ghcr.io/lerrouxlopez/flux-lorelei-harbor:latest
+                depends_on:
+                  lorelei-schema:
+                    condition: service_completed_successfully
+                  qdrant:
+                    condition: service_healthy
+                environment:
+                  DATABASE_URL: "postgres://app:app@postgres:5432/community_app?options=-c%20search_path%3Dlorelei"
+                  QDRANT_URL: http://qdrant:6334
+                  # Never used for real auth -- the static "mock" provider in lorelei.toml
+                  # ignores it, since every real run sends a per-request provider_override.
+                  LORELEI_MOCK_API_KEY: unused-mock-key
+                command: ["lorelei-harbor", "migrate"]
+
+              lorelei-harbor:
+                image: ghcr.io/lerrouxlopez/flux-lorelei-harbor:latest
+                restart: unless-stopped
+                depends_on:
+                  lorelei-migrate:
+                    condition: service_completed_successfully
+                environment:
+                  DATABASE_URL: "postgres://app:app@postgres:5432/community_app?options=-c%20search_path%3Dlorelei"
+                  QDRANT_URL: http://qdrant:6334
+                  LORELEI_MOCK_API_KEY: unused-mock-key
+                # Lets "host.docker.internal" (the base_url api-server forwards in each
+                # provider_override) resolve to this host's lorelei-brains (Ollama) systemd
+                # service, which listens on the docker bridge gateway but isn't published
+                # publicly. Requires Docker 20.10+ (this server runs current Ubuntu/Docker).
+                extra_hosts:
+                  - "host.docker.internal:host-gateway"
+                ports:
+                  - "127.0.0.1:8013:8080"
+                healthcheck:
+                  test: ["CMD", "wget", "-qO-", "http://localhost:8080/healthz"]
+                  interval: 5s
+                  timeout: 5s
+                  retries: 12
+
+              lorelei-worker:
+                image: ghcr.io/lerrouxlopez/flux-lorelei-harbor:latest
+                restart: unless-stopped
+                depends_on:
+                  lorelei-migrate:
+                    condition: service_completed_successfully
+                environment:
+                  DATABASE_URL: "postgres://app:app@postgres:5432/community_app?options=-c%20search_path%3Dlorelei"
+                  QDRANT_URL: http://qdrant:6334
+                  LORELEI_MOCK_API_KEY: unused-mock-key
+                extra_hosts:
+                  - "host.docker.internal:host-gateway"
+                command: ["lorelei-harbor", "worker"]
 
               redis:
                 image: redis:7
@@ -147,6 +244,14 @@ jobs:
                   REDIS_URL: redis://redis:6379
                   NATS_URL: nats://nats:4222
                   LIVEKIT_URL_INTERNAL: http://livekit:7880
+                  LORELEI_HARBOR_URL: http://lorelei-harbor:8080
+                  # This value is only ever read here and forwarded as a string inside the
+                  # provider_override sent to lorelei-harbor -- it's *harbor's* container
+                  # (not api-server's) that actually dials it, so the matching extra_hosts
+                  # entry lives on the lorelei-harbor/lorelei-worker services below, not here.
+                  # LORELEI_CREDENTIALS_KEY comes from FLUX_ENV_FILE (see /opt/flux/.env via
+                  # env_file above), not hardcoded here.
+                  LORELEI_OLLAMA_BASE_URL: http://host.docker.internal:11434
                 ports:
                   - "127.0.0.1:8010:8080"
 
@@ -201,4 +306,8 @@ jobs:
             docker compose up -d --remove-orphans
             docker compose ps
             curl -fsS http://127.0.0.1:8010/healthz >/dev/null
+            # Lorelei (harbor) is an optional integration -- routes that use it degrade
+            # gracefully when it's unreachable (see LoreleiRuntime::None in api-server), so
+            # a hiccup here is surfaced in the log rather than failing the whole deploy.
+            curl -fsS http://127.0.0.1:8013/healthz >/dev/null || echo "WARNING: lorelei-harbor healthz check failed"
             docker image prune -f
