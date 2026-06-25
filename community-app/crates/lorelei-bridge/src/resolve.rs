@@ -33,9 +33,14 @@ pub const LORELEI_USER_ID: Uuid = Uuid::from_bytes([
 /// host-level `lorelei-brains` systemd service.
 const OLLAMA_BASE_URL_ENV: &str = "LORELEI_OLLAMA_BASE_URL";
 const OLLAMA_DEFAULT_BASE_URL: &str = "http://127.0.0.1:11434";
-/// Matches `org_lorelei_settings.default_model`'s column default
-/// (`crates/db/migrations/202606230003_lorelei_integration_tables.sql`).
-const OLLAMA_DEFAULT_MODEL: &str = "llama3.2:3b";
+/// `org_lorelei_settings.default_model`'s column default is "llama3.2:3b", but that column
+/// is currently unread by application code (only `lorelei_tenant_id`/`lorelei_agent_id` from
+/// that row are used) -- this constant is the one actually in effect. Pinned to the 1b
+/// variant rather than 3b: measured on the VPS's 4-core CPU-only box, a single 3b
+/// completion takes ~17-39s, and Lorelei's pipeline makes two sequential completions (plan
+/// + answer) per turn, which blows past `run_and_wait`'s 60s timeout. 1b runs ~8-9s per
+/// call, comfortably under it. Revisit if the host ever gets a GPU or more cores.
+const OLLAMA_DEFAULT_MODEL: &str = "llama3.2:1b";
 /// Ollama ignores the bearer value entirely, but the OpenAI-compatible HTTP client requires
 /// a non-empty `Authorization` header to be set.
 const OLLAMA_PLACEHOLDER_API_KEY: &str = "ollama";
