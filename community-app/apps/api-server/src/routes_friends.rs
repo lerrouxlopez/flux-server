@@ -1,5 +1,6 @@
 use crate::{util, AppState, AuthContext};
 use api::ApiErrorCode;
+use lorelei_bridge::LORELEI_USER_ID;
 use axum::{
     extract::{Json, Path, State},
     http::StatusCode,
@@ -251,25 +252,33 @@ async fn create_request(
             .into_response();
     }
 
+    // Lorelei has no session of her own to call `accept_request` with, so a request sent to
+    // her is auto-accepted immediately — she's always willing to be friended.
+    let auto_accept = req.user_id == LORELEI_USER_ID;
+    let status = if auto_accept { "accepted" } else { "pending" };
+    let responded_at = if auto_accept { Some(now) } else { None };
+
     let request_id = Uuid::now_v7();
     let inserted = sqlx::query(
         r#"
-        insert into friend_requests (id, organization_id, requester_id, addressee_id, status, created_at)
-        values ($1, $2, $3, $4, 'pending', $5)
+        insert into friend_requests (id, organization_id, requester_id, addressee_id, status, created_at, responded_at)
+        values ($1, $2, $3, $4, $5, $6, $7)
         "#,
     )
     .bind(request_id)
     .bind(org_id)
     .bind(auth.user_id)
     .bind(req.user_id)
+    .bind(status)
     .bind(now)
+    .bind(responded_at)
     .execute(&state.pool)
     .await;
 
     match inserted {
         Ok(_) => (
             StatusCode::OK,
-            Json(serde_json::json!({ "status": "pending", "request_id": request_id })),
+            Json(serde_json::json!({ "status": status, "request_id": request_id })),
         )
             .into_response(),
         Err(err) => {

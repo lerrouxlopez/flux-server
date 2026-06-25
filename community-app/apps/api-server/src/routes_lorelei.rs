@@ -26,8 +26,21 @@ use sqlx::{PgPool, Row};
 use time::OffsetDateTime;
 use uuid::Uuid;
 
-const VALID_PROVIDERS: [&str; 3] = ["ollama", "openai", "anthropic"];
+const VALID_PROVIDERS: [&str; 2] = ["openai", "anthropic"];
 const VALID_CREDENTIAL_PROVIDERS: [&str; 2] = ["openai", "anthropic"];
+
+/// Posted in a DM when the *sender themself* has no usable OpenAI/Anthropic credential.
+const NO_KEY_MESSAGE_DM: &str =
+    "I can't respond yet — you haven't added an OpenAI or Anthropic API key. Add one under \
+     Profile → AI Assistant to chat with me.";
+
+/// Posted in an org channel when the *org owner* (whose credential org-channel runs use)
+/// has no usable OpenAI/Anthropic credential. The sender who @mentioned her is necessarily
+/// the owner too (see `maybe_trigger_reply`), but the message is phrased for whoever reads
+/// the channel, not just them.
+const NO_KEY_MESSAGE_CHANNEL: &str =
+    "I can't respond yet — the org owner hasn't added an OpenAI or Anthropic API key. Ask \
+     them to add one under Profile → AI Assistant.";
 
 /// Mounted under `/auth` in `app.rs` (merged alongside `routes_auth::router()`).
 pub fn me_router() -> Router<AppState> {
@@ -326,7 +339,7 @@ pub(crate) async fn maybe_trigger_reply(
                     return;
                 }
             };
-            run_and_reply(&pool, &nats, &lorelei, org_id, channel_id, thread.tenant_id, thread.agent_id, sender_user_id, input).await;
+            run_and_reply(&pool, &nats, &lorelei, org_id, channel_id, thread.tenant_id, thread.agent_id, sender_user_id, input, NO_KEY_MESSAGE_DM).await;
         });
         return;
     }
@@ -356,7 +369,7 @@ pub(crate) async fn maybe_trigger_reply(
                 return;
             }
         };
-        run_and_reply(&pool, &nats, &lorelei, org_id, channel_id, org.tenant_id, org.agent_id, sender_user_id, input).await;
+        run_and_reply(&pool, &nats, &lorelei, org_id, channel_id, org.tenant_id, org.agent_id, sender_user_id, input, NO_KEY_MESSAGE_CHANNEL).await;
     });
 }
 
@@ -371,48 +384,74 @@ async fn run_and_reply(
     agent_id: Uuid,
     credential_user_id: Uuid,
     input: String,
+    no_key_message: &str,
 ) {
-    let provider = match lorelei_bridge::resolve_provider(pool, &lorelei.credentials_key, credential_user_id).await {
-        Ok(p) => p,
+    // Bracket the whole resolution+run with a typing indicator, same as a real client's
+    // typing.start/typing.stop — Lorelei has no WebSocket connection of her own, so this
+    // publishes directly to the NATS subjects realtime-gateway already relays
+    // (`channel.{id}.typing.started`/`.stopped`), bypassing the client-only WS protocol.
+    emit_lorelei_typing(nats, channel_id, true).await;
+
+    let text = match lorelei_bridge::resolve_provider(pool, &lorelei.credentials_key, credential_user_id).await {
+        Ok(Some(provider)) => {
+            let outcome = lorelei
+                .harbor
+                .run_and_wait(
+                    tenant_id,
+                    agent_id,
+                    input,
+                    provider,
+                    lorelei_bridge::MaxRisk::Low,
+                    std::time::Duration::from_secs(60),
+                )
+                .await;
+
+            // `output`/the denial text come from the run's last Assistant event in
+            // lorelei-harbor — a run that fails before producing any text (e.g. the
+            // provider was unreachable) has no such event, so harbor reports an empty
+            // string rather than an error. Without this guard that empty string gets
+            // posted verbatim, which looks indistinguishable from Lorelei never
+            // responding at all.
+            match outcome {
+                Ok(lorelei_bridge::RunOutcome::Succeeded(text)) if !text.trim().is_empty() => text,
+                Ok(lorelei_bridge::RunOutcome::Denied(text)) if !text.trim().is_empty() => text,
+                Ok(lorelei_bridge::RunOutcome::Succeeded(_) | lorelei_bridge::RunOutcome::Denied(_)) => {
+                    tracing::error!(%org_id, %channel_id, "lorelei run finished with no output text");
+                    "Lorelei couldn't respond — try again.".to_string()
+                }
+                Ok(lorelei_bridge::RunOutcome::TimedOut) => {
+                    "Lorelei is taking longer than expected — try again in a moment.".to_string()
+                }
+                Err(e) => {
+                    tracing::error!(error = %e, "lorelei run failed");
+                    "Lorelei couldn't respond — try again.".to_string()
+                }
+            }
+        }
+        Ok(None) => no_key_message.to_string(),
         Err(e) => {
             tracing::error!(error = %e, "failed to resolve lorelei provider");
-            post_bot_message(
-                pool,
-                nats,
-                org_id,
-                channel_id,
-                "Lorelei couldn't respond — no API key is configured for the selected model.",
-            )
-            .await;
-            return;
-        }
-    };
-
-    let outcome = lorelei
-        .harbor
-        .run_and_wait(
-            tenant_id,
-            agent_id,
-            input,
-            provider,
-            lorelei_bridge::MaxRisk::Low,
-            std::time::Duration::from_secs(60),
-        )
-        .await;
-
-    let text = match outcome {
-        Ok(lorelei_bridge::RunOutcome::Succeeded(text)) => text,
-        Ok(lorelei_bridge::RunOutcome::Denied(text)) => text,
-        Ok(lorelei_bridge::RunOutcome::TimedOut) => {
-            "Lorelei is taking longer than expected — try again in a moment.".to_string()
-        }
-        Err(e) => {
-            tracing::error!(error = %e, "lorelei run failed");
             "Lorelei couldn't respond — try again.".to_string()
         }
     };
 
+    emit_lorelei_typing(nats, channel_id, false).await;
     post_bot_message(pool, nats, org_id, channel_id, &text).await;
+}
+
+/// Mirrors exactly what realtime-gateway's own `ClientEvent::TypingStart`/`TypingStop`
+/// handlers publish (see `apps/realtime-gateway/src/runtime.rs`) — same subject, same raw
+/// `ServerEvent`-shaped JSON (no `EventEnvelope` wrapper). The gateway's NATS fanout loop
+/// already subscribes to `channel.*.typing.started`/`.stopped` and re-broadcasts whatever
+/// it receives, so publishing here is all that's needed; no gateway changes required.
+async fn emit_lorelei_typing(nats: &async_nats::Client, channel_id: Uuid, started: bool) {
+    let kind = if started { "typing.started" } else { "typing.stopped" };
+    let payload = serde_json::json!({ "type": kind, "channel_id": channel_id, "user_id": LORELEI_USER_ID });
+    let Ok(bytes) = serde_json::to_vec(&payload) else { return };
+    let subject = format!("channel.{channel_id}.{kind}");
+    if let Err(err) = nats.publish(subject, bytes.into()).await {
+        tracing::error!(error = %err, %channel_id, "failed to publish lorelei typing event");
+    }
 }
 
 async fn post_bot_message(

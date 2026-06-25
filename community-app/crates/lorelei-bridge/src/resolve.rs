@@ -26,19 +26,16 @@ pub const LORELEI_USER_ID: Uuid = Uuid::from_bytes([
     0x63, 0xdc, 0xae, 0x57, 0xb2, 0xf5, 0x47, 0x25, 0xa1, 0x61, 0xc1, 0x35, 0x99, 0x11, 0x3a, 0x80,
 ]);
 
-/// What to send Lorelei for a given run's provider.
+/// There is no platform default provider — every run is a caller-supplied,
+/// request-scoped provider/model/credential, BYO'd by whichever user's profile this
+/// resolution is for. `resolve_provider` returns `None` when that user has no usable
+/// credential; callers must treat that as "can't run" rather than fall back to anything.
 #[derive(Debug, Clone)]
-pub enum ProviderResolution {
-    /// Use lorelei-harbor's statically configured default provider (Ollama). No
-    /// `provider_override` is sent — the credential never leaves Lorelei's own config.
-    PlatformDefault,
-    /// A caller-supplied, request-scoped provider/model/credential.
-    Override {
-        /// Lorelei's wire `ProviderKind` value (kebab-case: "openai-compatible" | "anthropic").
-        kind: String,
-        model: String,
-        api_key: String,
-    },
+pub struct ResolvedProvider {
+    /// Lorelei's wire `ProviderKind` value (kebab-case: "openai-compatible" | "anthropic").
+    pub kind: String,
+    pub model: String,
+    pub api_key: String,
 }
 
 #[derive(sqlx::FromRow)]
@@ -62,19 +59,23 @@ fn to_wire_kind(provider: &str) -> Option<&'static str> {
 
 fn default_model_for(provider: &str) -> &'static str {
     match provider {
-        "openai" => "gpt-4o-mini",
         "anthropic" => "claude-3-5-sonnet-latest",
-        _ => "llama3.2:3b",
+        // "openai" and any unrecognized value (shouldn't happen — to_wire_kind already
+        // filtered to openai/anthropic before this is called).
+        _ => "gpt-4o-mini",
     }
 }
 
 /// Resolves the effective provider for `user_id`. Used identically for a PM sender or an
 /// org-channel's owner — the resolution chain doesn't care which role the user plays.
+/// Returns `Ok(None)` when the user hasn't picked a provider, picked one with no saved
+/// credential, or picked an unrecognized value — callers should treat all three the same:
+/// tell them to add a key, don't attempt a run.
 pub async fn resolve_provider(
     pool: &PgPool,
     key: &CredentialsKey,
     user_id: Uuid,
-) -> Result<ProviderResolution, BridgeError> {
+) -> Result<Option<ResolvedProvider>, BridgeError> {
     let pref = sqlx::query_as::<_, UserPreferenceRow>(
         "select preferred_provider, preferred_model from user_lorelei_preferences where user_id = $1",
     )
@@ -88,10 +89,10 @@ pub async fn resolve_provider(
     };
 
     let Some(provider) = preferred_provider else {
-        return Ok(ProviderResolution::PlatformDefault);
+        return Ok(None);
     };
     let Some(wire_kind) = to_wire_kind(&provider) else {
-        return Ok(ProviderResolution::PlatformDefault);
+        return Ok(None);
     };
 
     let cred = sqlx::query_as::<_, CredentialRow>(
@@ -106,15 +107,15 @@ pub async fn resolve_provider(
         Some(row) => {
             let api_key = secrets::decrypt(&row.encrypted_api_key, key)?;
             let model = preferred_model.unwrap_or_else(|| default_model_for(&provider).to_string());
-            Ok(ProviderResolution::Override {
+            Ok(Some(ResolvedProvider {
                 kind: wire_kind.to_string(),
                 model,
                 api_key,
-            })
+            }))
         }
-        // Wanted a paid provider but never saved a key for it — fall back rather than fail;
-        // the caller still gets a real reply, just from the free default.
-        None => Ok(ProviderResolution::PlatformDefault),
+        // Picked a provider but never saved a key for it — no usable credential, same as
+        // never having picked one at all.
+        None => Ok(None),
     }
 }
 

@@ -6,7 +6,7 @@ use std::time::Duration;
 use uuid::Uuid;
 
 use crate::error::BridgeError;
-use crate::resolve::ProviderResolution;
+use crate::resolve::ResolvedProvider;
 
 /// Caps which shells a run may use, mirroring Lorelei's `ShellRisk` (`lorelei-core/src/types.rs`,
 /// no `#[serde(rename_all)]`, so the wire form is the literal Rust variant name).
@@ -151,28 +151,23 @@ impl HarborClient {
     }
 
     /// Submits a run and polls `GET /v1/runs/:id` with exponential backoff (capped at 3s)
-    /// until it reaches a terminal state or `timeout` elapses.
+    /// until it reaches a terminal state or `timeout` elapses. There's no platform default
+    /// provider — callers must already have a `ResolvedProvider` (i.e. `resolve_provider`
+    /// returned `Some`) before calling this; it always sends a `provider_override`.
     pub async fn run_and_wait(
         &self,
         tenant_id: Uuid,
         agent_id: Uuid,
         input: String,
-        provider: ProviderResolution,
+        provider: ResolvedProvider,
         max_risk: MaxRisk,
         timeout: Duration,
     ) -> Result<RunOutcome, BridgeError> {
-        let provider_override = match provider {
-            ProviderResolution::PlatformDefault => None,
-            ProviderResolution::Override {
-                kind,
-                model,
-                api_key,
-            } => Some(ProviderOverrideWire {
-                kind,
-                model,
-                api_key,
-            }),
-        };
+        let provider_override = Some(ProviderOverrideWire {
+            kind: provider.kind,
+            model: provider.model,
+            api_key: provider.api_key,
+        });
 
         let run_id = self
             .create_run(tenant_id, agent_id, input, provider_override, max_risk)
