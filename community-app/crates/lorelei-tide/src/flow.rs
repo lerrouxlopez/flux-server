@@ -32,6 +32,7 @@ impl TideShellExecutor {
             input: format!("tool: {}", call.tool),
             context: Vec::new(),
             reasoning_summary: None,
+            temperature: None,
         };
         let response = SongResponse {
             output: String::new(),

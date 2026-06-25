@@ -64,6 +64,7 @@ fn serde_round_trip_song_request() {
         input: "Sing".to_string(),
         context: vec!["The Lore".to_string()],
         reasoning_summary: Some("brief".to_string()),
+        temperature: None,
     };
 
     let encoded = serde_json::to_string(&req).unwrap();

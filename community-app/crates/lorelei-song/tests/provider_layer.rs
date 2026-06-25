@@ -28,6 +28,7 @@ async fn mock_provider_returns_deterministic_response() {
             input: "hello".to_string(),
             context: vec![],
             reasoning_summary: None,
+            temperature: None,
         })
         .await
         .unwrap();
@@ -182,6 +183,7 @@ async fn fallback_uses_second_provider_on_retryable_error() {
                 input: "hello".to_string(),
                 context: vec![],
                 reasoning_summary: None,
+                temperature: None,
             },
         )
         .await
@@ -208,6 +210,7 @@ async fn streaming_chunks_can_be_collected() {
                 input: "stream me".to_string(),
                 context: vec![],
                 reasoning_summary: None,
+                temperature: None,
             },
         )
         .await

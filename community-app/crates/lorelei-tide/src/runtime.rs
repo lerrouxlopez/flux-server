@@ -476,6 +476,8 @@ impl SingleAgentTideRuntime {
                     input: user_input.clone(),
                     context: echo_hits.iter().map(|h| h.content.clone()).collect(),
                     reasoning_summary: None,
+                    // Never actually sent to a provider -- just an audit record for Siren.
+                    temperature: None,
                 };
                 let response = SongResponse {
                     output: planner_raw,
@@ -725,6 +727,7 @@ impl SingleAgentTideRuntime {
             input: prompt,
             context: echo_hits.iter().map(|h| h.content.clone()).collect(),
             reasoning_summary: Some("planner".to_string()),
+            temperature: Some(0.0),
         };
 
         let resp = song.complete(req).await?;
@@ -743,6 +746,7 @@ impl SingleAgentTideRuntime {
                     input: repair_prompt,
                     context: Vec::new(),
                     reasoning_summary: Some("planner_repair".to_string()),
+                    temperature: Some(0.0),
                 };
                 let repair_resp = song.complete(repair_req).await?;
                 let repaired_raw = repair_resp.output.clone();
@@ -759,6 +763,7 @@ impl SingleAgentTideRuntime {
                             input: repair_prompt2,
                             context: Vec::new(),
                             reasoning_summary: Some("planner_repair2".to_string()),
+                            temperature: Some(0.0),
                         };
                         let repair_resp2 = song.complete(repair_req2).await?;
                         let repaired_raw2 = repair_resp2.output.clone();
@@ -803,6 +808,8 @@ impl SingleAgentTideRuntime {
             input: prompt,
             context: echo_hits.iter().map(|h| h.content.clone()).collect(),
             reasoning_summary: Some("answer".to_string()),
+            // Free-text reply, not structured output -- leave at the provider's default.
+            temperature: None,
         };
         let resp = song.complete(req).await?;
         Ok(resp.output)
@@ -838,6 +845,7 @@ impl SingleAgentTideRuntime {
             input: prompt,
             context: echo_hits.iter().map(|h| h.content.clone()).collect(),
             reasoning_summary: Some("answer".to_string()),
+            temperature: None,
         };
         let resp = song.complete(req).await?;
         Ok(resp.output)
@@ -897,6 +905,7 @@ impl SingleAgentTideRuntime {
                 input: extractor_prompt,
                 context: Vec::new(),
                 reasoning_summary: Some("lore_extractor".to_string()),
+                temperature: Some(0.0),
             };
             let resp = song.complete(req).await?;
             let raw = resp.output;
@@ -915,6 +924,7 @@ impl SingleAgentTideRuntime {
                         input: repair_prompt,
                         context: Vec::new(),
                         reasoning_summary: Some("lore_extractor_repair".to_string()),
+                        temperature: Some(0.0),
                     };
                     let repair_resp = song.complete(repair_req).await?;
                     parse_candidate_list(&repair_resp.output).map_err(|second_err| {
@@ -951,6 +961,7 @@ impl SingleAgentTideRuntime {
                 input: critic_prompt,
                 context: Vec::new(),
                 reasoning_summary: Some("lore_critic".to_string()),
+                temperature: Some(0.0),
             };
 
             match song.complete(critic_req).await {

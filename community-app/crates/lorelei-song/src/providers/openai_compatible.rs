@@ -155,6 +155,7 @@ impl SongProvider for OpenAiCompatibleProvider {
             tools: None,
             tool_choice: None,
             response_format: None,
+            temperature: request.temperature,
         };
 
         let (resp, retries, latency): (ChatCompletionsResponse, u32, Duration) =
@@ -272,6 +273,8 @@ struct ChatCompletionsRequest {
     tool_choice: Option<Value>,
     #[serde(skip_serializing_if = "Option::is_none")]
     response_format: Option<Value>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    temperature: Option<f32>,
 }
 
 #[derive(Debug, Serialize)]
