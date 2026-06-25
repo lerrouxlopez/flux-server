@@ -26,7 +26,11 @@ port = 8080
 [lore]
 postgres_url_env = "DATABASE_URL"
 qdrant_url_env = "QDRANT_URL"
-collection = "lorelei_ollama"
+# Was "lorelei_ollama", sized for Ollama's nomic-embed-text vectors. Every real run now
+# fails memory retrieval with a Qdrant vector-size mismatch against that collection since
+# default_embedding_provider switched to "mock" (different vector dimension) -- renaming
+# lets Qdrant create a fresh, correctly-sized collection instead of reusing the stale one.
+collection = "lorelei_mock"
 
 [echo]
 top_k = 20
