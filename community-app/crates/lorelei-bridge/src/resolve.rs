@@ -26,16 +26,36 @@ pub const LORELEI_USER_ID: Uuid = Uuid::from_bytes([
     0x63, 0xdc, 0xae, 0x57, 0xb2, 0xf5, 0x47, 0x25, 0xa1, 0x61, 0xc1, 0x35, 0x99, 0x11, 0x3a, 0x80,
 ]);
 
-/// There is no platform default provider — every run is a caller-supplied,
-/// request-scoped provider/model/credential, BYO'd by whichever user's profile this
-/// resolution is for. `resolve_provider` returns `None` when that user has no usable
-/// credential; callers must treat that as "can't run" rather than fall back to anything.
+/// Env var pointing at the self-hosted Ollama (lorelei-brains) instance's base URL — read
+/// at resolve time rather than threaded through `AppState`, since it's only needed on this
+/// one path. Unset in dev/test (falls back to a local default); set in the VPS deployment's
+/// `docker-compose.yml` to the docker bridge gateway address so containers can reach the
+/// host-level `lorelei-brains` systemd service.
+const OLLAMA_BASE_URL_ENV: &str = "LORELEI_OLLAMA_BASE_URL";
+const OLLAMA_DEFAULT_BASE_URL: &str = "http://127.0.0.1:11434";
+/// Matches `org_lorelei_settings.default_model`'s column default
+/// (`crates/db/migrations/202606230003_lorelei_integration_tables.sql`).
+const OLLAMA_DEFAULT_MODEL: &str = "llama3.2:3b";
+/// Ollama ignores the bearer value entirely, but the OpenAI-compatible HTTP client requires
+/// a non-empty `Authorization` header to be set.
+const OLLAMA_PLACEHOLDER_API_KEY: &str = "ollama";
+
+/// Ollama (lorelei-brains) is the zero-config platform default — it needs no BYO credential,
+/// so a user who has never set a preference (or has explicitly picked "ollama") always gets
+/// a usable provider. Anthropic/OpenAI remain opt-in upgrades that require the user to have
+/// saved their own key; `resolve_provider` returns `None` only for *that* case (picked a BYO
+/// provider but never saved a key for it, or picked an unrecognized value) — callers should
+/// treat it as "can't run", not fall back to anything themselves.
 #[derive(Debug, Clone)]
 pub struct ResolvedProvider {
-    /// Lorelei's wire `ProviderKind` value (kebab-case: "openai-compatible" | "anthropic").
+    /// Lorelei's wire `ProviderKind` value (kebab-case: "local" | "openai-compatible" |
+    /// "anthropic"). Ollama resolves to "local".
     pub kind: String,
     pub model: String,
     pub api_key: String,
+    /// Only set for "local" (Ollama) — `openai-compatible`/`anthropic` use Lorelei's static
+    /// per-kind default endpoints.
+    pub base_url: Option<String>,
 }
 
 #[derive(sqlx::FromRow)]
@@ -68,9 +88,12 @@ fn default_model_for(provider: &str) -> &'static str {
 
 /// Resolves the effective provider for `user_id`. Used identically for a PM sender or an
 /// org-channel's owner — the resolution chain doesn't care which role the user plays.
-/// Returns `Ok(None)` when the user hasn't picked a provider, picked one with no saved
-/// credential, or picked an unrecognized value — callers should treat all three the same:
-/// tell them to add a key, don't attempt a run.
+///
+/// Returns `Ok(None)` only when the user explicitly picked a BYO provider (openai/anthropic)
+/// and either never saved a credential for it or picked an unrecognized value — callers
+/// should treat that as "can't run", not fall back to anything. Every other case (no
+/// preference saved at all, or an explicit "ollama" preference) resolves to the self-hosted
+/// Ollama instance, which needs no credential.
 pub async fn resolve_provider(
     pool: &PgPool,
     key: &CredentialsKey,
@@ -88,9 +111,20 @@ pub async fn resolve_provider(
         None => (None, None),
     };
 
-    let Some(provider) = preferred_provider else {
-        return Ok(None);
-    };
+    let provider = preferred_provider.unwrap_or_else(|| "ollama".to_string());
+
+    if provider == "ollama" {
+        let model = preferred_model.unwrap_or_else(|| OLLAMA_DEFAULT_MODEL.to_string());
+        let base_url = std::env::var(OLLAMA_BASE_URL_ENV)
+            .unwrap_or_else(|_| OLLAMA_DEFAULT_BASE_URL.to_string());
+        return Ok(Some(ResolvedProvider {
+            kind: "local".to_string(),
+            model,
+            api_key: OLLAMA_PLACEHOLDER_API_KEY.to_string(),
+            base_url: Some(base_url),
+        }));
+    }
+
     let Some(wire_kind) = to_wire_kind(&provider) else {
         return Ok(None);
     };
@@ -111,6 +145,7 @@ pub async fn resolve_provider(
                 kind: wire_kind.to_string(),
                 model,
                 api_key,
+                base_url: None,
             }))
         }
         // Picked a provider but never saved a key for it — no usable credential, same as
