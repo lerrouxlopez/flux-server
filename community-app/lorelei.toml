@@ -1,17 +1,23 @@
 # Lorelei runtime config for the merged flux-server deployment.
 #
-# Only `mock` (tests) and `ollama` (the platform-wide free default) are registered here.
-# OpenAI/Anthropic are never statically configured — every BYO-key request goes through
-# `lorelei-bridge`'s dynamic `provider_override`, which constructs an ephemeral provider
-# per-request from the org/user's resolved credential. Registering them here would also
-# make lorelei-harbor fail to boot whenever their api_key_env isn't set (see
-# `ProviderRegistry::from_config`, which eagerly constructs every configured provider).
+# There is no platform-default chat provider — Lorelei only ever runs with a BYO
+# OpenAI/Anthropic credential, supplied per-request via `lorelei-bridge`'s dynamic
+# `provider_override` (constructed from the org owner's or DM sender's resolved
+# credential; see `crates/lorelei-bridge/src/resolve.rs`). `default_provider` below is
+# never used by a real chat run — every real run sends a `provider_override` — but
+# `ProviderRegistry::from_config` still needs *some* statically configured default to
+# boot, so it points at `mock`, which is always registered and needs no real API key.
+#
+# `default_embedding_provider` is also `mock`: there's currently no real embedding
+# provider configured (Anthropic has no embeddings API; wiring OpenAI embeddings for
+# this is a separate, not-yet-requested feature), so Lorelei's memory/retrieval feature
+# produces placeholder vectors rather than real ones until that's added.
 
 [agent]
 tenant_id = "00000000-0000-0000-0000-000000000000"
 agent_id = "00000000-0000-0000-0000-000000000000"
-default_provider = "ollama"
-default_embedding_provider = "ollama"
+default_provider = "mock"
+default_embedding_provider = "mock"
 
 [harbor]
 host = "0.0.0.0"
@@ -42,10 +48,3 @@ base_url = "http://127.0.0.1:0"
 api_key_env = "LORELEI_MOCK_API_KEY"
 chat_model = "mock-chat"
 embedding_model = "mock-embed"
-
-[providers.ollama]
-kind = "local"
-base_url = "http://ollama:11434/v1"
-api_key_env = "LORELEI_LOCAL_API_KEY"
-chat_model = "llama3.2:3b"
-embedding_model = "nomic-embed-text"
